@@ -180,4 +180,8 @@ struct SessionTransferState: Codable, Sendable, Identifiable {
     var canRetry: Bool {
         stage == .transferFailed
     }
+
+    var canManage: Bool {
+        stage != .recording
+    }
 }

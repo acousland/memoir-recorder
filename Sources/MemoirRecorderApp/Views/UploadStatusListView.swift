@@ -38,6 +38,21 @@ struct UploadStatusListView: View {
                                 }
                                 .font(.caption)
                             }
+
+                            if transfer.canManage {
+                                HStack(spacing: 12) {
+                                    Button("Rename") {
+                                        Task { await model.recordingController.renameStoppedTransfer(sessionID: transfer.sessionID) }
+                                    }
+                                    .font(.caption)
+
+                                    Button("Delete") {
+                                        Task { await model.recordingController.deleteStoppedTransfer(sessionID: transfer.sessionID) }
+                                    }
+                                    .font(.caption)
+                                    .foregroundStyle(.red)
+                                }
+                            }
                         }
 
                         if transfer.id != items.last?.id {

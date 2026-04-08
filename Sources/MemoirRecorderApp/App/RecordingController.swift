@@ -119,6 +119,36 @@ final class RecordingController {
         await refreshTransferStatuses()
     }
 
+    func renameStoppedTransfer(sessionID: String) async {
+        guard let transferState = recentTransfers.first(where: { $0.sessionID == sessionID }) else { return }
+        guard transferState.canManage else { return }
+        guard let newName = promptForRename(currentName: transferState.sessionName) else { return }
+
+        do {
+            _ = try await sessionManager.renameTransferState(transferState, to: newName)
+            transferText = "Recording renamed"
+            lastError = nil
+            await refreshTransferStatuses()
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func deleteStoppedTransfer(sessionID: String) async {
+        guard let transferState = recentTransfers.first(where: { $0.sessionID == sessionID }) else { return }
+        guard transferState.canManage else { return }
+        guard confirmDelete(sessionName: transferState.sessionName) else { return }
+
+        do {
+            try await sessionManager.deleteTransferState(transferState)
+            transferText = "Recording deleted"
+            lastError = nil
+            await refreshTransferStatuses()
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
     func renameCurrentRecording() async {
         guard let currentSession else { return }
         let trimmedName = activeRecordingName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -210,5 +240,34 @@ final class RecordingController {
     private func sanitizedDraftRecordingName() -> String? {
         let trimmed = draftRecordingName.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func promptForRename(currentName: String) -> String? {
+        let alert = NSAlert()
+        alert.messageText = "Rename Recording"
+        alert.informativeText = "Choose a new name for this recording."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+
+        let textField = NSTextField(string: currentName)
+        textField.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
+        alert.accessoryView = textField
+
+        let response = alert.runModal()
+        guard response == .alertFirstButtonReturn else { return nil }
+
+        let trimmed = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func confirmDelete(sessionName: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Delete Recording"
+        alert.informativeText = "Delete \"\(sessionName)\" and all of its local files?"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 }

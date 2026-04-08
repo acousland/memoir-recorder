@@ -146,6 +146,57 @@ actor SessionManager {
         return renamedSession
     }
 
+    func renameTransferState(_ transferState: SessionTransferState, to newName: String) throws -> SessionTransferState {
+        let trimmedName = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty, trimmedName != transferState.sessionName else {
+            return transferState
+        }
+
+        guard let startedAt = DateFormatting.parseISO8601(transferState.startedAt) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+
+        let currentFolderURL = transferState.sessionFolderURL
+        let parentURL = currentFolderURL.deletingLastPathComponent()
+        let desiredFolderURL = parentURL.appendingPathComponent(
+            DateFormatting.sessionFolderName(for: startedAt, sessionName: trimmedName),
+            isDirectory: true
+        )
+        let destinationFolderURL = try uniqueFolderURL(preferred: desiredFolderURL, excluding: currentFolderURL)
+
+        try fileManager.moveItem(at: currentFolderURL, to: destinationFolderURL)
+
+        let renamedStateURL = destinationFolderURL.appendingPathComponent("transfer-state.json")
+        var renamedTransferState = try loadTransferState(at: renamedStateURL)
+        renamedTransferState.sessionName = trimmedName
+        renamedTransferState.sessionFolderPath = destinationFolderURL.path
+
+        let metadataURL = destinationFolderURL.appendingPathComponent("metadata.json")
+        if fileManager.fileExists(atPath: metadataURL.path) {
+            var metadata = try decoder.decode(RecordingMetadata.self, from: Data(contentsOf: metadataURL))
+            metadata = RecordingMetadata(
+                sessionID: metadata.sessionID,
+                sessionName: trimmedName,
+                recordingStartedAt: metadata.recordingStartedAt,
+                recordingEndedAt: metadata.recordingEndedAt,
+                timezone: metadata.timezone,
+                systemAudio: metadata.systemAudio,
+                micAudio: metadata.micAudio,
+                languageHint: metadata.languageHint,
+                notes: metadata.notes
+            )
+            let metadataData = try encoder.encode(metadata)
+            try metadataData.write(to: metadataURL, options: .atomic)
+        }
+
+        try persistTransferState(renamedTransferState, at: renamedStateURL)
+        return renamedTransferState
+    }
+
+    func deleteTransferState(_ transferState: SessionTransferState) throws {
+        try fileManager.removeItem(at: transferState.sessionFolderURL)
+    }
+
     func markIncompleteSessions(in root: URL) async {
         let sessions = loadTransferStates(in: root)
         for var state in sessions where state.stage == .recording {
