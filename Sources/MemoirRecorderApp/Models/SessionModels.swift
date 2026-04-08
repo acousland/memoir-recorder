@@ -110,6 +110,9 @@ struct SessionTransferState: Codable, Sendable, Identifiable {
     var metadataFile: UploadFileState?
     var systemFile: UploadFileState?
     var micFile: UploadFileState?
+    var metadataUploadPath: String?
+    var systemUploadPath: String?
+    var micUploadPath: String?
     var lastErrorCode: String?
     var lastErrorMessage: String?
     var retryCount: Int
@@ -183,5 +186,13 @@ struct SessionTransferState: Codable, Sendable, Identifiable {
 
     var canManage: Bool {
         stage != .recording
+    }
+
+    func withUploadPaths(metadata: String?, system: String?, mic: String?) -> SessionTransferState {
+        var copy = self
+        copy.metadataUploadPath = metadata
+        copy.systemUploadPath = system
+        copy.micUploadPath = mic
+        return copy
     }
 }

@@ -63,7 +63,7 @@ struct ProcessorAPIClient: Sendable {
         let (data, response) = try await session.data(for: request)
         logResponse(response, data: data, endpoint: "health")
         let health = try decode(ProcessorHealthResponse.self, from: data, response: response, endpoint: "health")
-        guard health.apiVersion == 1 else {
+        guard health.apiVersion == "1" else {
             throw ProcessorClientError.apiVersionMismatch
         }
         return health
@@ -81,40 +81,42 @@ struct ProcessorAPIClient: Sendable {
     }
 
     func uploadFile(
-        relativePath: String,
+        uploadPath: String,
         fileURL: URL,
         contentType: String,
         sha256: String
     ) async throws -> ProcessorFileUploadResponse {
-        var request = try makeRequest(path: relativePath, method: "PUT")
+        var request = try makeRequest(path: uploadPath, method: "PUT")
         request.addValue(contentType, forHTTPHeaderField: "Content-Type")
         request.addValue(sha256, forHTTPHeaderField: "X-Content-SHA256")
-        let size = (try FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? NSNumber)?.int64Value ?? 0
+        let size = (try FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? NSNumber)?.intValue ?? 0
         request.addValue(String(size), forHTTPHeaderField: "Content-Length")
 
         logRequest(request)
         let (data, response) = try await session.upload(for: request, fromFile: fileURL)
-        logResponse(response, data: data, endpoint: relativePath)
+        logResponse(response, data: data, endpoint: uploadPath)
         guard let http = response as? HTTPURLResponse else {
-            throw ProcessorClientError.invalidResponse(endpoint: relativePath, statusCode: nil, body: responseSnippet(from: data))
+            throw ProcessorClientError.invalidResponse(endpoint: uploadPath, statusCode: nil, body: responseSnippet(from: data))
         }
         if (200..<300).contains(http.statusCode) {
-            if let decoded = try? decoder.decode(ProcessorFileUploadResponse.self, from: data) {
-                return decoded
+            do {
+                return try decoder.decode(ProcessorFileUploadResponse.self, from: data)
+            } catch let decodingError as DecodingError {
+                Self.logger.error("Processor decode failure for \(uploadPath, privacy: .public): \(self.describe(decodingError: decodingError, data: data), privacy: .public)")
+                throw ProcessorClientError.malformedSuccessResponse(
+                    endpoint: uploadPath,
+                    message: describe(decodingError: decodingError, data: data)
+                )
+            } catch {
+                Self.logger.error("Processor decode failure for \(uploadPath, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                throw ProcessorClientError.malformedSuccessResponse(
+                    endpoint: uploadPath,
+                    message: error.localizedDescription
+                )
             }
-
-            let size = (try FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? NSNumber)?.int64Value ?? 0
-            let file = URL(string: relativePath)?.lastPathComponent ?? relativePath.components(separatedBy: "/").last ?? "unknown"
-            return ProcessorFileUploadResponse(
-                sessionID: "",
-                file: file,
-                sizeBytes: size,
-                sha256: sha256,
-                accepted: true
-            )
         }
 
-        return try decode(ProcessorFileUploadResponse.self, from: data, response: response, endpoint: relativePath)
+        return try decode(ProcessorFileUploadResponse.self, from: data, response: response, endpoint: uploadPath)
     }
 
     func completeSession(
@@ -178,11 +180,13 @@ struct ProcessorAPIClient: Sendable {
             do {
                 return try decoder.decode(Response.self, from: data)
             } catch let decodingError as DecodingError {
+                Self.logger.error("Processor decode failure for \(endpoint, privacy: .public): \(self.describe(decodingError: decodingError, data: data), privacy: .public)")
                 throw ProcessorClientError.malformedSuccessResponse(
                     endpoint: endpoint,
                     message: describe(decodingError: decodingError, data: data)
                 )
             } catch {
+                Self.logger.error("Processor decode failure for \(endpoint, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 throw ProcessorClientError.malformedSuccessResponse(
                     endpoint: endpoint,
                     message: error.localizedDescription
@@ -191,7 +195,7 @@ struct ProcessorAPIClient: Sendable {
         }
 
         if
-            let errorEnvelope = try? decoder.decode(ProcessorErrorEnvelope.self, from: data)
+            let errorEnvelope = try? decoder.decode(ProcessorErrorResponse.self, from: data)
         {
             if errorEnvelope.error.code == "unsupported_api_version" {
                 throw ProcessorClientError.apiVersionMismatch
@@ -247,5 +251,20 @@ struct ProcessorAPIClient: Sendable {
     private func responseSnippet(from data: Data) -> String? {
         guard !data.isEmpty else { return nil }
         return String(data: data.prefix(1000), encoding: .utf8)
+    }
+
+    func resolvedUploadPath(from path: String) throws -> String {
+        if path.hasPrefix("/") {
+            return path
+        }
+
+        if URL(string: path)?.scheme != nil {
+            guard let absolute = URL(string: path) else {
+                throw ProcessorClientError.invalidBaseURL
+            }
+            return absolute.absoluteString
+        }
+
+        return path
     }
 }

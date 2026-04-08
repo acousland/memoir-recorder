@@ -32,7 +32,7 @@ actor ProcessorTransferManager {
         do {
             let client = try makeClient(settings: settings)
             let health = try await client.healthCheck()
-            guard health.apiVersion == 1 else {
+            guard health.apiVersion == "1" else {
                 throw ProcessorClientError.apiVersionMismatch
             }
 
@@ -48,7 +48,7 @@ actor ProcessorTransferManager {
             let completeIdempotencyKey = state.completeIdempotencyKey
 
             if state.stage == .preparingTransfer || state.stage == .localSaveComplete || state.stage == .transferFailed {
-                let createRequest = ProcessorCreateSessionRequest(
+                let createRequest = CreateSessionRequest(
                     sessionID: sessionID,
                     sessionName: state.sessionName,
                     recordingStartedAt: state.startedAt,
@@ -60,12 +60,22 @@ actor ProcessorTransferManager {
                     ),
                     expectedFiles: .init(metadata: true, system: true, mic: state.microphoneEnabled)
                 )
-                _ = try await retrying(state: state) {
+                let createResponse = try await retrying(state: state) {
                     try await client.createSession(requestBody: createRequest, idempotencyKey: createIdempotencyKey)
                 }
-                state.stage = .remoteSessionCreated
+                state.remoteIngestionState = createResponse.ingestionState
                 state.lastErrorCode = nil
                 state.lastErrorMessage = nil
+                let uploadPaths = createResponse.uploadURLs
+                let metadataUploadPath = uploadPaths["metadata"] ?? "v1/sessions/\(sessionID)/files/metadata"
+                let systemUploadPath = uploadPaths["system"] ?? "v1/sessions/\(sessionID)/files/system"
+                let micUploadPath = uploadPaths["mic"] ?? "v1/sessions/\(sessionID)/files/mic"
+                state = state.withUploadPaths(
+                    metadata: metadataUploadPath,
+                    system: systemUploadPath,
+                    mic: micUploadPath
+                )
+                state.stage = .remoteSessionCreated
                 try await sessionManager.persist(state)
             }
 
@@ -76,9 +86,10 @@ actor ProcessorTransferManager {
                 } else {
                     metadataFile = try await sessionManager.uploadFileState(for: metadataURL)
                 }
+                let metadataUploadPath = state.metadataUploadPath ?? "v1/sessions/\(sessionID)/files/metadata"
                 _ = try await retrying(state: state) {
                     try await client.uploadFile(
-                        relativePath: "v1/sessions/\(sessionID)/files/metadata",
+                        uploadPath: metadataUploadPath,
                         fileURL: metadataURL,
                         contentType: "application/json",
                         sha256: metadataFile.sha256
@@ -96,9 +107,10 @@ actor ProcessorTransferManager {
                 } else {
                     systemFile = try await sessionManager.uploadFileState(for: systemURL)
                 }
+                let systemUploadPath = state.systemUploadPath ?? "v1/sessions/\(sessionID)/files/system"
                 _ = try await retrying(state: state) {
                     try await client.uploadFile(
-                        relativePath: "v1/sessions/\(sessionID)/files/system",
+                        uploadPath: systemUploadPath,
                         fileURL: systemURL,
                         contentType: "audio/wav",
                         sha256: systemFile.sha256
@@ -116,9 +128,10 @@ actor ProcessorTransferManager {
                 } else {
                     micFile = try await sessionManager.uploadFileState(for: micURL)
                 }
+                let micUploadPath = state.micUploadPath ?? "v1/sessions/\(sessionID)/files/mic"
                 _ = try await retrying(state: state) {
                     try await client.uploadFile(
-                        relativePath: "v1/sessions/\(sessionID)/files/mic",
+                        uploadPath: micUploadPath,
                         fileURL: micURL,
                         contentType: "audio/wav",
                         sha256: micFile.sha256
@@ -142,12 +155,15 @@ actor ProcessorTransferManager {
                 } else {
                     systemFile = try await sessionManager.uploadFileState(for: systemURL)
                 }
-                let completeRequest = ProcessorCompleteSessionRequest(
-                    uploadedFiles: .init(
-                        metadata: metadataFile,
-                        system: systemFile,
-                        mic: state.microphoneEnabled ? state.micFile : nil
-                    )
+                var uploadedFiles: [String: UploadedFileDescriptor] = [
+                    "metadata": .init(sizeBytes: Int(metadataFile.sizeBytes), sha256: metadataFile.sha256),
+                    "system": .init(sizeBytes: Int(systemFile.sizeBytes), sha256: systemFile.sha256)
+                ]
+                if state.microphoneEnabled, let micFile = state.micFile {
+                    uploadedFiles["mic"] = .init(sizeBytes: Int(micFile.sizeBytes), sha256: micFile.sha256)
+                }
+                let completeRequest = CompleteSessionRequest(
+                    uploadedFiles: uploadedFiles
                 )
                 let completeResponse = try await retrying(state: state) {
                     try await client.completeSession(
