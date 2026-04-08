@@ -5,47 +5,73 @@ struct SettingsView: View {
     @Bindable var model: AppModel
 
     var body: some View {
-        Form {
-            Toggle("Record microphone", isOn: $model.settingsStore.settings.microphoneEnabled)
-            Toggle("Auto-upload after recording", isOn: $model.settingsStore.settings.autoUploadEnabled)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                GroupBox("Recording") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        TextField("Next recording name (optional)", text: $model.recordingController.draftRecordingName)
+                            .textFieldStyle(.roundedBorder)
 
-            Picker("Sample rate", selection: $model.settingsStore.settings.sampleRate) {
-                Text("16 kHz").tag(16_000)
-                Text("44.1 kHz").tag(44_100)
-            }
+                        if model.recordingController.isRecording {
+                            HStack {
+                                TextField("Current recording name", text: $model.recordingController.activeRecordingName)
+                                    .textFieldStyle(.roundedBorder)
+                                Button("Rename Current") {
+                                    Task { await model.recordingController.renameCurrentRecording() }
+                                }
+                            }
+                        }
 
-            HStack {
-                TextField("Recording folder", text: Binding(
-                    get: { model.settingsStore.settings.recordingDirectoryURL.path },
-                    set: { _ in }
-                ))
-                .disabled(true)
+                        Toggle("Record microphone", isOn: $model.settingsStore.settings.microphoneEnabled)
+                        Toggle("Auto-upload after recording", isOn: $model.settingsStore.settings.autoUploadEnabled)
 
-                Button("Choose…") {
-                    chooseDirectory()
+                        Picker("Sample rate", selection: $model.settingsStore.settings.sampleRate) {
+                            Text("16 kHz").tag(16_000)
+                            Text("44.1 kHz").tag(44_100)
+                        }
+
+                        HStack {
+                            TextField("Recording folder", text: Binding(
+                                get: { model.settingsStore.settings.recordingDirectoryURL.path },
+                                set: { _ in }
+                            ))
+                            .disabled(true)
+
+                            Button("Choose…") {
+                                chooseDirectory()
+                            }
+                        }
+                    }
                 }
-            }
 
-            TextField("Processor base URL", text: $model.settingsStore.settings.processorBaseURLString)
+                GroupBox("Processor") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        TextField("Processor base URL", text: $model.settingsStore.settings.processorBaseURLString)
+                            .textFieldStyle(.roundedBorder)
 
-            SecureField("Processor bearer token", text: $model.settingsStore.settings.processorBearerToken)
+                        SecureField("Processor bearer token", text: $model.settingsStore.settings.processorBearerToken)
+                            .textFieldStyle(.roundedBorder)
 
-            TextField("Processor friendly name", text: $model.settingsStore.settings.processorFriendlyName)
+                        TextField("Processor friendly name", text: $model.settingsStore.settings.processorFriendlyName)
+                            .textFieldStyle(.roundedBorder)
 
-            HStack {
-                Button("Test Connection") {
-                    Task { await model.recordingController.testConnection() }
+                        HStack {
+                            Button("Test Connection") {
+                                Task { await model.recordingController.testConnection() }
+                            }
+                            Button("Refresh Upload Status") {
+                                Task { await model.recordingController.refreshTransferStatuses() }
+                            }
+                            Text(model.recordingController.transferText)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
-                Button("Refresh Upload Status") {
-                    Task { await model.recordingController.refreshTransferStatuses() }
-                }
-                Text(model.recordingController.transferText)
-                    .foregroundStyle(.secondary)
-            }
 
-            UploadStatusListView(model: model, maxItems: 8)
+                UploadStatusListView(model: model, maxItems: 8)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .formStyle(.grouped)
         .task {
             await model.recordingController.refreshTransferStatuses()
         }

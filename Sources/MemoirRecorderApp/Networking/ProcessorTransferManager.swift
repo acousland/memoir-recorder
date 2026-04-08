@@ -195,10 +195,11 @@ actor ProcessorTransferManager {
     }
 
     private func makeClient(settings: AppSettings) throws -> ProcessorAPIClient {
-        guard let baseURL = settings.processorBaseURL, !settings.processorBearerToken.isEmpty else {
+        guard let baseURL = settings.processorBaseURL else {
             throw ProcessorClientError.notConfigured
         }
-        return ProcessorAPIClient(configuration: .init(baseURL: baseURL, token: settings.processorBearerToken))
+        let token = settings.processorBearerToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ProcessorAPIClient(configuration: .init(baseURL: baseURL, token: token.isEmpty ? nil : token))
     }
 
     private func shouldResume(_ state: SessionTransferState) -> Bool {

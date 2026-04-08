@@ -20,7 +20,7 @@ struct MemoirRecorderApp: App {
 
         Settings {
             SettingsView(model: model)
-                .frame(width: 480, height: 360)
+                .frame(minWidth: 720, minHeight: 620)
                 .padding()
         }
     }

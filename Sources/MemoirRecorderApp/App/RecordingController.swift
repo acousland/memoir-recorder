@@ -23,6 +23,8 @@ final class RecordingController {
     var transferText = "Idle"
     var lastError: String?
     var recentTransfers: [SessionTransferState] = []
+    var draftRecordingName = ""
+    var activeRecordingName = ""
 
     init(
         sessionManager: SessionManager,
@@ -70,6 +72,7 @@ final class RecordingController {
             microphoneRecorder = nil
             systemCapture = nil
             microphoneCapture = nil
+            activeRecordingName = ""
             statusText = "Recording saved"
             transferText = settingsStore.settings.autoUploadEnabled ? "Uploading to processor" : "Saved locally"
             sendNotification(title: "Recording saved", body: session.sessionName)
@@ -116,15 +119,37 @@ final class RecordingController {
         await refreshTransferStatuses()
     }
 
+    func renameCurrentRecording() async {
+        guard let currentSession else { return }
+        let trimmedName = activeRecordingName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            activeRecordingName = currentSession.sessionName
+            return
+        }
+
+        do {
+            let renamedSession = try await sessionManager.renameSession(currentSession, to: trimmedName)
+            self.currentSession = renamedSession
+            self.activeRecordingName = renamedSession.sessionName
+            self.lastError = nil
+            self.transferText = "Recording renamed"
+        } catch {
+            self.lastError = error.localizedDescription
+            self.activeRecordingName = currentSession.sessionName
+        }
+    }
+
     private func startRecording() async throws {
         let settings = settingsStore.settings
-        let session = try await sessionManager.createSession(settings: settings)
+        let customName = sanitizedDraftRecordingName()
+        let session = try await sessionManager.createSession(settings: settings, sessionName: customName)
 
         do {
             let systemRecorder = try AudioTrackRecorder(outputURL: session.systemAudioURL, sampleRate: Double(settings.sampleRate))
             let systemCapture = SystemAudioCaptureSource()
 
             self.currentSession = session
+            self.activeRecordingName = session.sessionName
             self.systemRecorder = systemRecorder
             self.systemCapture = systemCapture
 
@@ -141,6 +166,7 @@ final class RecordingController {
                 self.microphoneRecorder = micRecorder
                 self.microphoneCapture = micCapture
             }
+            draftRecordingName = ""
         } catch {
             await cleanupFailedRecordingStart()
             throw error
@@ -157,6 +183,7 @@ final class RecordingController {
         microphoneRecorder = nil
         systemCapture = nil
         microphoneCapture = nil
+        activeRecordingName = ""
     }
 
     private func requestMicrophoneAccessIfNeeded() async throws {
@@ -178,5 +205,10 @@ final class RecordingController {
             _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
             try? await UNUserNotificationCenter.current().add(request)
         }
+    }
+
+    private func sanitizedDraftRecordingName() -> String? {
+        let trimmed = draftRecordingName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }

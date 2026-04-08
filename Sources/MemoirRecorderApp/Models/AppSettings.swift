@@ -39,6 +39,6 @@ struct AppSettings: Codable, Equatable {
     }
 
     var isProcessorConfigured: Bool {
-        processorBaseURL != nil && !processorBearerToken.isEmpty
+        processorBaseURL != nil
     }
 }

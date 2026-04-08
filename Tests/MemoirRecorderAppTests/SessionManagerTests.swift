@@ -29,4 +29,23 @@ struct SessionManagerTests {
         #expect(metadata.systemAudio.sampleRateHz == 16_000)
         #expect(metadata.micAudio?.filename == "mic.wav" || metadata.micAudio == nil)
     }
+
+    @Test
+    func renamingSessionUpdatesFolderAndTransferState() async throws {
+        let manager = SessionManager()
+        var settings = AppSettings()
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        settings.recordingDirectoryURL = root
+
+        let session = try await manager.createSession(settings: settings, sessionName: "Original Name")
+        let renamed = try await manager.renameSession(session, to: "Renamed Session")
+        let renamedTransferState = await manager
+            .loadTransferStates(in: session.folderURL.deletingLastPathComponent())
+            .first(where: { $0.sessionID == renamed.sessionID })
+
+        #expect(renamed.sessionName == "Renamed Session")
+        #expect(renamed.folderURL.lastPathComponent.contains("Renamed-Session"))
+        #expect(renamedTransferState?.sessionName == "Renamed Session")
+        #expect(renamedTransferState?.sessionFolderPath == renamed.folderURL.path)
+    }
 }

@@ -8,6 +8,16 @@ struct StatusMenuView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Memoir")
                 .font(.headline)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Recording name")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField("Optional meeting name", text: $model.recordingController.draftRecordingName)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(model.recordingController.isRecording)
+            }
+
             Text(model.recordingController.statusText)
                 .font(.subheadline)
             Text(model.recordingController.transferText)
@@ -24,6 +34,19 @@ struct StatusMenuView: View {
             Divider()
 
             if model.recordingController.isRecording {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Current recording name")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        TextField("Recording name", text: $model.recordingController.activeRecordingName)
+                            .textFieldStyle(.roundedBorder)
+                        Button("Rename") {
+                            Task { await model.recordingController.renameCurrentRecording() }
+                        }
+                    }
+                }
+
                 Button("Stop Recording") {
                     Task { await model.recordingController.stop() }
                 }

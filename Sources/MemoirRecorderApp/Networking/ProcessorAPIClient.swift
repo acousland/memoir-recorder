@@ -10,7 +10,7 @@ enum ProcessorClientError: LocalizedError, Sendable {
     var errorDescription: String? {
         switch self {
         case .notConfigured:
-            "Processor URL or bearer token is missing."
+            "Processor URL is missing."
         case .invalidResponse:
             "Processor returned an invalid response."
         case .invalidBaseURL:
@@ -34,7 +34,7 @@ enum ProcessorClientError: LocalizedError, Sendable {
 
 struct ProcessorConfiguration: Sendable {
     let baseURL: URL
-    let token: String
+    let token: String?
 }
 
 struct ProcessorAPIClient: Sendable {
@@ -113,8 +113,8 @@ struct ProcessorAPIClient: Sendable {
         if method != "PUT" {
             request.addValue("application/json", forHTTPHeaderField: "Content-Type")
         }
-        if authenticated {
-            request.addValue("Bearer \(configuration.token)", forHTTPHeaderField: "Authorization")
+        if authenticated, let token = configuration.token, !token.isEmpty {
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         return request
     }

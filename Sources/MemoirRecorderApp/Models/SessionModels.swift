@@ -21,6 +21,22 @@ struct RecordingSession: Codable, Identifiable, Sendable {
     let microphoneEnabled: Bool
 
     var sessionID: String { id.uuidString.lowercased() }
+
+    func renamed(to sessionName: String, folderURL: URL) -> RecordingSession {
+        RecordingSession(
+            id: id,
+            sessionName: sessionName,
+            startedAt: startedAt,
+            endedAt: endedAt,
+            timezoneIdentifier: timezoneIdentifier,
+            folderURL: folderURL,
+            systemAudioURL: folderURL.appendingPathComponent("system.wav"),
+            microphoneAudioURL: microphoneEnabled ? folderURL.appendingPathComponent("mic.wav") : nil,
+            metadataURL: folderURL.appendingPathComponent("metadata.json"),
+            transferStateURL: folderURL.appendingPathComponent("transfer-state.json"),
+            microphoneEnabled: microphoneEnabled
+        )
+    }
 }
 
 struct RecordingMetadata: Codable, Sendable, Equatable {
@@ -83,8 +99,8 @@ enum TransferStage: String, Codable, Sendable {
 
 struct SessionTransferState: Codable, Sendable, Identifiable {
     let sessionID: String
-    let sessionName: String
-    let sessionFolderPath: String
+    var sessionName: String
+    var sessionFolderPath: String
     let startedAt: String
     var endedAt: String?
     let microphoneEnabled: Bool

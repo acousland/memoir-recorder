@@ -122,6 +122,30 @@ actor SessionManager {
         return transferState
     }
 
+    func renameSession(_ session: RecordingSession, to newName: String) throws -> RecordingSession {
+        let trimmedName = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty, trimmedName != session.sessionName else {
+            return session
+        }
+
+        let parentURL = session.folderURL.deletingLastPathComponent()
+        let desiredFolderURL = parentURL.appendingPathComponent(
+            DateFormatting.sessionFolderName(for: session.startedAt, sessionName: trimmedName),
+            isDirectory: true
+        )
+        let destinationFolderURL = try uniqueFolderURL(preferred: desiredFolderURL, excluding: session.folderURL)
+
+        try fileManager.moveItem(at: session.folderURL, to: destinationFolderURL)
+
+        let renamedSession = session.renamed(to: trimmedName, folderURL: destinationFolderURL)
+        var transferState = try loadTransferState(at: renamedSession.transferStateURL)
+        transferState.sessionName = trimmedName
+        transferState.sessionFolderPath = destinationFolderURL.path
+        try persistTransferState(transferState, at: renamedSession.transferStateURL)
+
+        return renamedSession
+    }
+
     func markIncompleteSessions(in root: URL) async {
         let sessions = loadTransferStates(in: root)
         for var state in sessions where state.stage == .recording {
@@ -164,6 +188,24 @@ actor SessionManager {
     private func persistTransferState(_ state: SessionTransferState, at url: URL) throws {
         let data = try encoder.encode(state)
         try data.write(to: url, options: .atomic)
+    }
+
+    private func uniqueFolderURL(preferred: URL, excluding currentURL: URL) throws -> URL {
+        if preferred == currentURL || !fileManager.fileExists(atPath: preferred.path) {
+            return preferred
+        }
+
+        let baseName = preferred.lastPathComponent
+        let parentURL = preferred.deletingLastPathComponent()
+
+        for index in 2...100 {
+            let candidate = parentURL.appendingPathComponent("\(baseName)-\(index)", isDirectory: true)
+            if !fileManager.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+        }
+
+        throw CocoaError(.fileWriteFileExists)
     }
 
     private func defaultSessionName(for date: Date) -> String {
