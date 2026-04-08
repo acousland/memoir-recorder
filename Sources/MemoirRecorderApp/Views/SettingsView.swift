@@ -91,6 +91,15 @@ struct SettingsView: View {
         .task {
             await model.recordingController.refreshTransferStatuses()
         }
+        .background(
+            WindowAccessorView { window in
+                window.title = "Settings"
+                window.collectionBehavior.insert(.moveToActiveSpace)
+                NSApp.activate(ignoringOtherApps: true)
+                window.makeKeyAndOrderFront(nil)
+                window.orderFrontRegardless()
+            }
+        )
     }
 
     private func chooseDirectory() {

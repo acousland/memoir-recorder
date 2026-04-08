@@ -9,6 +9,7 @@ APP_DIR="$DIST_DIR/$APP_NAME"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 FRAMEWORKS_DIR="$CONTENTS_DIR/Frameworks"
+RESOURCES_DIR="$CONTENTS_DIR/Resources"
 EXECUTABLE_NAME="MemoirRecorderApp"
 
 echo "Building release executable..."
@@ -22,11 +23,15 @@ fi
 
 echo "Preparing app bundle..."
 rm -rf "$APP_DIR"
-mkdir -p "$MACOS_DIR" "$FRAMEWORKS_DIR"
+mkdir -p "$MACOS_DIR" "$FRAMEWORKS_DIR" "$RESOURCES_DIR"
 
 cp "$ROOT_DIR/Bundle/Info.plist" "$CONTENTS_DIR/Info.plist"
 cp "$EXECUTABLE_PATH" "$MACOS_DIR/$EXECUTABLE_NAME"
 chmod +x "$MACOS_DIR/$EXECUTABLE_NAME"
+
+if [[ -f "$ROOT_DIR/Bundle/AppIcon.icns" ]]; then
+  cp "$ROOT_DIR/Bundle/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
+fi
 
 echo "Embedding Swift runtime libraries..."
 SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"

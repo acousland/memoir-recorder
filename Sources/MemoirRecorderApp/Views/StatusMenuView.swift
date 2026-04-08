@@ -59,6 +59,7 @@ struct StatusMenuView: View {
             UploadStatusListView(model: model, maxItems: 3)
 
             Button("Settings") {
+                NSApp.activate(ignoringOtherApps: true)
                 openSettings()
             }
 
