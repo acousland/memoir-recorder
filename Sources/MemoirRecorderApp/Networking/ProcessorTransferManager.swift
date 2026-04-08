@@ -237,6 +237,6 @@ actor ProcessorTransferManager {
                 try? await sessionManager.persist(persistedState)
             }
         }
-        throw lastError ?? ProcessorClientError.invalidResponse
+        throw lastError ?? ProcessorClientError.invalidResponse(endpoint: "unknown", statusCode: nil, body: nil)
     }
 }
