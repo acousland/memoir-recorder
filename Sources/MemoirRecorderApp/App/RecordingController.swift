@@ -16,11 +16,13 @@ final class RecordingController {
     private var microphoneRecorder: AudioTrackRecorder?
     private var systemCapture: SystemAudioCaptureSource?
     private var microphoneCapture: MicrophoneCaptureSource?
+    private var hasResumedPendingTransfers = false
 
     var isRecording = false
     var statusText = "Ready"
     var transferText = "Idle"
     var lastError: String?
+    var recentTransfers: [SessionTransferState] = []
 
     init(
         sessionManager: SessionManager,
@@ -71,7 +73,9 @@ final class RecordingController {
             statusText = "Recording saved"
             transferText = settingsStore.settings.autoUploadEnabled ? "Uploading to processor" : "Saved locally"
             sendNotification(title: "Recording saved", body: session.sessionName)
+            await refreshTransferStatuses()
             await transferManager.enqueue(transferState: transferState, settings: settingsStore.settings)
+            await refreshTransferStatuses()
             transferText = "Background transfer updated"
         } catch {
             lastError = error.localizedDescription
@@ -83,6 +87,7 @@ final class RecordingController {
         do {
             let health = try await transferManager.testConnection(settings: settingsStore.settings)
             transferText = "Connected to \(health.service)"
+            lastError = nil
         } catch {
             transferText = "Connection failed"
             lastError = error.localizedDescription
@@ -90,33 +95,68 @@ final class RecordingController {
     }
 
     func resumePendingTransfers() async {
+        guard !hasResumedPendingTransfers else { return }
+        hasResumedPendingTransfers = true
         await sessionManager.markIncompleteSessions(in: settingsStore.settings.recordingDirectoryURL)
         await transferManager.resumePendingTransfers(settings: settingsStore.settings)
+        await refreshTransferStatuses()
+    }
+
+    func refreshTransferStatuses() async {
+        let states = await sessionManager.loadTransferStates(in: settingsStore.settings.recordingDirectoryURL)
+        recentTransfers = states.sorted {
+            ($0.startedAtDate ?? .distantPast) > ($1.startedAtDate ?? .distantPast)
+        }
+    }
+
+    func retryTransfer(sessionID: String) async {
+        guard let transferState = recentTransfers.first(where: { $0.sessionID == sessionID }) else { return }
+        transferText = "Retrying upload"
+        await transferManager.enqueue(transferState: transferState, settings: settingsStore.settings)
+        await refreshTransferStatuses()
     }
 
     private func startRecording() async throws {
         let settings = settingsStore.settings
         let session = try await sessionManager.createSession(settings: settings)
-        let systemRecorder = try AudioTrackRecorder(outputURL: session.systemAudioURL, sampleRate: Double(settings.sampleRate))
-        let systemCapture = SystemAudioCaptureSource()
 
-        self.currentSession = session
-        self.systemRecorder = systemRecorder
-        self.systemCapture = systemCapture
+        do {
+            let systemRecorder = try AudioTrackRecorder(outputURL: session.systemAudioURL, sampleRate: Double(settings.sampleRate))
+            let systemCapture = SystemAudioCaptureSource()
 
-        try await systemCapture.start { [weak systemRecorder] buffer in
-            systemRecorder?.append(buffer: buffer)
-        }
+            self.currentSession = session
+            self.systemRecorder = systemRecorder
+            self.systemCapture = systemCapture
 
-        if settings.microphoneEnabled, let micURL = session.microphoneAudioURL {
-            let micRecorder = try AudioTrackRecorder(outputURL: micURL, sampleRate: Double(settings.sampleRate))
-            let micCapture = MicrophoneCaptureSource()
-            try micCapture.start { [weak micRecorder] buffer in
-                micRecorder?.append(buffer: buffer)
+            try await systemCapture.start { [weak systemRecorder] buffer in
+                systemRecorder?.append(buffer: buffer)
             }
-            self.microphoneRecorder = micRecorder
-            self.microphoneCapture = micCapture
+
+            if settings.microphoneEnabled, let micURL = session.microphoneAudioURL {
+                let micRecorder = try AudioTrackRecorder(outputURL: micURL, sampleRate: Double(settings.sampleRate))
+                let micCapture = MicrophoneCaptureSource()
+                try micCapture.start { [weak micRecorder] buffer in
+                    micRecorder?.append(buffer: buffer)
+                }
+                self.microphoneRecorder = micRecorder
+                self.microphoneCapture = micCapture
+            }
+        } catch {
+            await cleanupFailedRecordingStart()
+            throw error
         }
+    }
+
+    private func cleanupFailedRecordingStart() async {
+        await systemCapture?.stop()
+        microphoneCapture?.stop()
+        systemRecorder?.finish()
+        microphoneRecorder?.finish()
+        currentSession = nil
+        systemRecorder = nil
+        microphoneRecorder = nil
+        systemCapture = nil
+        microphoneCapture = nil
     }
 
     private func requestMicrophoneAccessIfNeeded() async throws {

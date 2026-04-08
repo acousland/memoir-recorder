@@ -81,7 +81,7 @@ enum TransferStage: String, Codable, Sendable {
     case transferFailed
 }
 
-struct SessionTransferState: Codable, Sendable {
+struct SessionTransferState: Codable, Sendable, Identifiable {
     let sessionID: String
     let sessionName: String
     let sessionFolderPath: String
@@ -103,5 +103,65 @@ struct SessionTransferState: Codable, Sendable {
 
     var sessionFolderURL: URL {
         URL(fileURLWithPath: sessionFolderPath, isDirectory: true)
+    }
+
+    var id: String { sessionID }
+
+    var startedAtDate: Date? {
+        DateFormatting.parseISO8601(startedAt)
+    }
+
+    var nextRetryDate: Date? {
+        guard let nextRetryAt else { return nil }
+        return DateFormatting.parseISO8601(nextRetryAt)
+    }
+
+    var stageLabel: String {
+        switch stage {
+        case .recording:
+            "Recording"
+        case .localSaveComplete:
+            "Saved locally"
+        case .preparingTransfer:
+            "Preparing transfer"
+        case .remoteSessionCreated:
+            "Registered with processor"
+        case .metadataUploaded:
+            "Uploaded metadata"
+        case .systemUploaded:
+            "Uploaded system audio"
+        case .micUploaded:
+            "Uploaded microphone audio"
+        case .completeAccepted:
+            "Queued for processing"
+        case .queuedForProcessing:
+            "Queued for processing"
+        case .processing:
+            "Processing"
+        case .processingFailed:
+            "Processing failed"
+        case .transferFailed:
+            "Transfer failed"
+        }
+    }
+
+    var detailLabel: String {
+        if let remoteProcessingState, !remoteProcessingState.isEmpty {
+            return remoteProcessingState.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+        if let remoteIngestionState, !remoteIngestionState.isEmpty {
+            return remoteIngestionState.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+        if let lastErrorMessage, !lastErrorMessage.isEmpty {
+            return lastErrorMessage
+        }
+        if let nextRetryDate {
+            return "Retrying \(RelativeDateTimeFormatter().localizedString(for: nextRetryDate, relativeTo: Date()))"
+        }
+        return microphoneEnabled ? "System + mic" : "System only"
+    }
+
+    var canRetry: Bool {
+        stage == .transferFailed
     }
 }

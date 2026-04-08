@@ -36,11 +36,19 @@ struct SettingsView: View {
                 Button("Test Connection") {
                     Task { await model.recordingController.testConnection() }
                 }
+                Button("Refresh Upload Status") {
+                    Task { await model.recordingController.refreshTransferStatuses() }
+                }
                 Text(model.recordingController.transferText)
                     .foregroundStyle(.secondary)
             }
+
+            UploadStatusListView(model: model, maxItems: 8)
         }
         .formStyle(.grouped)
+        .task {
+            await model.recordingController.refreshTransferStatuses()
+        }
     }
 
     private func chooseDirectory() {

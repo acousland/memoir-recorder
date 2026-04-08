@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct StatusMenuView: View {
+    @Environment(\.openSettings) private var openSettings
     @Bindable var model: AppModel
 
     var body: some View {
@@ -32,8 +33,10 @@ struct StatusMenuView: View {
                 }
             }
 
+            UploadStatusListView(model: model, maxItems: 3)
+
             Button("Settings") {
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                openSettings()
             }
 
             Button("Quit") {
@@ -43,6 +46,7 @@ struct StatusMenuView: View {
         .frame(minWidth: 280)
         .task {
             await model.recordingController.resumePendingTransfers()
+            await model.recordingController.refreshTransferStatuses()
         }
         .padding()
     }

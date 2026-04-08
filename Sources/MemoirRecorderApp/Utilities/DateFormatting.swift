@@ -11,6 +11,10 @@ enum DateFormatting {
         makeISO8601Formatter().string(from: date)
     }
 
+    static func parseISO8601(_ string: String) -> Date? {
+        makeISO8601Formatter().date(from: string)
+    }
+
     static func sessionFolderName(for date: Date, sessionName: String) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
