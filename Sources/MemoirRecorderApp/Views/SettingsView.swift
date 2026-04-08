@@ -3,6 +3,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @Bindable var model: AppModel
+    @State private var saveMessage = ""
 
     var body: some View {
         ScrollView {
@@ -69,6 +70,21 @@ struct SettingsView: View {
                 }
 
                 UploadStatusListView(model: model, maxItems: 8)
+
+                HStack {
+                    Button("Save Settings") {
+                        model.settingsStore.saveNow()
+                        saveMessage = "Settings saved"
+                    }
+
+                    if !saveMessage.isEmpty {
+                        Text(saveMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

@@ -27,6 +27,10 @@ final class SettingsStore {
         settings.recordingDirectoryURL = url
     }
 
+    func saveNow() {
+        save()
+    }
+
     private func save() {
         if let data = try? JSONEncoder().encode(settings) {
             defaults.set(data, forKey: key)
