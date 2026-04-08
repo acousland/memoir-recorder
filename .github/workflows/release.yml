@@ -69,15 +69,18 @@ jobs:
           path: |
             dist/Memoir.app
             dist/*.zip
+            dist/*.dmg
           if-no-files-found: error
 
-      - name: Upload zip to GitHub release
+      - name: Upload packaged assets to GitHub release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
-          files: dist/*.zip
+          files: |
+            dist/*.zip
+            dist/*.dmg
           generate_release_notes: true
           draft: false
           prerelease: false
