@@ -6,7 +6,9 @@ GitHub Actions workflow:
 - builds `dist/Memoir.app`
 - packages a zip archive from the app bundle
 - uploads the bundle and zip as workflow artifacts
-- uploads the zip to GitHub Releases for tag pushes like `v1.0.0` and published releases
+- creates a GitHub Release for tag pushes like `v1.0.0`
+- uploads the zip to that release
+- marks the new release as the repository's latest release
 
 Local commands:
 
