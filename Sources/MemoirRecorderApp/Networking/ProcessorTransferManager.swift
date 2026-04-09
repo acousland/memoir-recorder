@@ -67,9 +67,9 @@ actor ProcessorTransferManager {
                 state.lastErrorCode = nil
                 state.lastErrorMessage = nil
                 let uploadPaths = createResponse.uploadURLs
-                let metadataUploadPath = uploadPaths["metadata"] ?? "v1/sessions/\(sessionID)/files/metadata"
-                let systemUploadPath = uploadPaths["system"] ?? "v1/sessions/\(sessionID)/files/system"
-                let micUploadPath = uploadPaths["mic"] ?? "v1/sessions/\(sessionID)/files/mic"
+                let metadataUploadPath = try client.resolvedUploadPath(from: uploadPaths["metadata"] ?? "v1/sessions/\(sessionID)/files/metadata")
+                let systemUploadPath = try client.resolvedUploadPath(from: uploadPaths["system"] ?? "v1/sessions/\(sessionID)/files/system")
+                let micUploadPath = try client.resolvedUploadPath(from: uploadPaths["mic"] ?? "v1/sessions/\(sessionID)/files/mic")
                 state = state.withUploadPaths(
                     metadata: metadataUploadPath,
                     system: systemUploadPath,
@@ -182,7 +182,14 @@ actor ProcessorTransferManager {
             if let status {
                 state.remoteIngestionState = status.ingestionState
                 state.remoteProcessingState = status.processingState
-                state.stage = status.processingState == "failed" ? .processingFailed : .queuedForProcessing
+                switch status.processingState {
+                case "failed":
+                    state.stage = .processingFailed
+                case "queued", nil:
+                    state.stage = .queuedForProcessing
+                default:
+                    state.stage = .processing
+                }
                 state.lastErrorCode = status.error?.code
                 state.lastErrorMessage = status.error?.message
                 try await sessionManager.persist(state)

@@ -1,9 +1,14 @@
 import AVFoundation
-import CoreMedia
 import Foundation
 @preconcurrency import ScreenCaptureKit
 
 final class SystemAudioCaptureSource: NSObject, SCStreamOutput, @unchecked Sendable {
+    struct CapturedBuffer: @unchecked Sendable {
+        let buffer: AVAudioPCMBuffer
+        let firstSampleHostTimeNs: UInt64?
+        let latencyFrames: Int
+    }
+
     enum CaptureError: LocalizedError {
         case noDisplay
         case permissionDenied
@@ -19,10 +24,10 @@ final class SystemAudioCaptureSource: NSObject, SCStreamOutput, @unchecked Senda
     }
 
     private let sampleQueue = DispatchQueue(label: "memoir.audio.system")
-    private var handler: ((AVAudioPCMBuffer) -> Void)?
+    private var handler: ((CapturedBuffer) -> Void)?
     private var stream: SCStream?
 
-    func start(handler: @escaping @Sendable (AVAudioPCMBuffer) -> Void) async throws {
+    func start(handler: @escaping @Sendable (CapturedBuffer) -> Void) async throws {
         self.handler = handler
 
         guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
@@ -72,7 +77,14 @@ final class SystemAudioCaptureSource: NSObject, SCStreamOutput, @unchecked Senda
                 else {
                     return
                 }
-                handler?(pcmBuffer)
+                let hostTimeNs = DispatchTime.now().uptimeNanoseconds
+                handler?(
+                    CapturedBuffer(
+                        buffer: pcmBuffer,
+                        firstSampleHostTimeNs: hostTimeNs,
+                        latencyFrames: 0
+                    )
+                )
             }
         } catch {
             NSLog("System audio capture sample handling failed: %@", error.localizedDescription)

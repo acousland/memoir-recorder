@@ -61,11 +61,28 @@ final class RecordingController {
         microphoneRecorder?.finish()
 
         do {
+            guard let activeSystemRecorder = systemRecorder else {
+                throw NSError(domain: "MemoirRecorder", code: 500, userInfo: [NSLocalizedDescriptionKey: "Missing system recording data."])
+            }
+            let sessionZeroHostTimeNs = resolvedSessionZeroHostTimeNs()
+            let microphoneStats = microphoneRecorder?.recordingStats()
+            let microphoneCorrectionPlan = microphoneStats.map {
+                AudioAlignment.plan(stats: $0, sessionZeroHostTimeNs: sessionZeroHostTimeNs)
+            }
+            let finalizedSystemTrack = try activeSystemRecorder.finalizeAlignedExport(
+                filename: "system.wav",
+                sessionZeroHostTimeNs: sessionZeroHostTimeNs,
+                correctionPlan: nil
+            )
+            let finalizedMicTrack = try microphoneRecorder?.finalizeAlignedExport(
+                filename: "mic.wav",
+                sessionZeroHostTimeNs: sessionZeroHostTimeNs,
+                correctionPlan: microphoneCorrectionPlan
+            )
             let transferState = try await sessionManager.finalizeSession(
                 session,
-                sampleRate: settingsStore.settings.sampleRate,
-                systemDurationSeconds: systemRecorder?.durationSeconds() ?? 0,
-                micDurationSeconds: microphoneRecorder?.durationSeconds()
+                systemTrack: finalizedSystemTrack,
+                micTrack: finalizedMicTrack
             )
             currentSession = nil
             systemRecorder = nil
@@ -183,15 +200,23 @@ final class RecordingController {
             self.systemRecorder = systemRecorder
             self.systemCapture = systemCapture
 
-            try await systemCapture.start { [weak systemRecorder] buffer in
-                systemRecorder?.append(buffer: buffer)
+            try await systemCapture.start { [weak systemRecorder] captured in
+                systemRecorder?.append(
+                    buffer: captured.buffer,
+                    firstSampleHostTimeNs: captured.firstSampleHostTimeNs,
+                    latencyFrames: captured.latencyFrames
+                )
             }
 
             if settings.microphoneEnabled, let micURL = session.microphoneAudioURL {
                 let micRecorder = try AudioTrackRecorder(outputURL: micURL, sampleRate: Double(settings.sampleRate))
                 let micCapture = MicrophoneCaptureSource()
-                try micCapture.start { [weak micRecorder] buffer in
-                    micRecorder?.append(buffer: buffer)
+                try micCapture.start { [weak micRecorder] captured in
+                    micRecorder?.append(
+                        buffer: captured.buffer,
+                        firstSampleHostTimeNs: captured.firstSampleHostTimeNs,
+                        latencyFrames: captured.latencyFrames
+                    )
                 }
                 self.microphoneRecorder = micRecorder
                 self.microphoneCapture = micCapture
@@ -269,5 +294,13 @@ final class RecordingController {
         alert.addButton(withTitle: "Delete")
         alert.addButton(withTitle: "Cancel")
         return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    private func resolvedSessionZeroHostTimeNs() -> UInt64 {
+        let systemHostTime = systemRecorder?.recordingStats().firstSampleHostTimeNs
+        let microphoneHostTime = microphoneRecorder?.recordingStats().firstSampleHostTimeNs
+        return [systemHostTime, microphoneHostTime]
+            .compactMap { $0 }
+            .min() ?? DispatchTime.now().uptimeNanoseconds
     }
 }

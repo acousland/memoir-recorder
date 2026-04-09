@@ -1,4 +1,5 @@
 @testable import MemoirRecorderApp
+import AVFoundation
 import Foundation
 import Testing
 
@@ -20,7 +21,20 @@ struct SessionManagerTests {
         let session = try await manager.createSession(settings: settings, sessionName: "Weekly Review")
         FileManager.default.createFile(atPath: session.systemAudioURL.path, contents: Data(repeating: 0, count: 128))
 
-        let state = try await manager.finalizeSession(session, sampleRate: 16_000, systemDurationSeconds: 10, micDurationSeconds: nil)
+        let state = try await manager.finalizeSession(
+            session,
+            systemTrack: FinalizedAudioTrackInfo(
+                filename: "system.wav",
+                sampleRateHz: 16_000,
+                channels: 1,
+                durationFrames: 160_000,
+                durationSeconds: 10,
+                firstSampleHostTimeNs: 7_758_391_023_301_000,
+                startOffsetSeconds: 0,
+                latencyFrames: 0
+            ),
+            micTrack: nil
+        )
         let data = try Data(contentsOf: session.metadataURL)
         let metadata = try JSONDecoder().decode(RecordingMetadata.self, from: data)
 
@@ -28,6 +42,10 @@ struct SessionManagerTests {
         #expect(metadata.systemAudio.filename == "system.wav")
         #expect(metadata.systemAudio.sampleRateHz == 16_000)
         #expect(metadata.micAudio?.filename == "mic.wav" || metadata.micAudio == nil)
+        #expect(metadata.streamSync.timeline == "host_time_ns")
+        #expect(metadata.streamSync.alignedWavExport == true)
+        #expect(metadata.streamSync.streams.system.firstSampleHostTimeNs == "7758391023301000")
+        #expect(metadata.streamSync.streams.system.startOffsetSeconds == 0)
     }
 
     @Test
@@ -60,7 +78,20 @@ struct SessionManagerTests {
 
         let session = try await manager.createSession(settings: settings, sessionName: "Original Name")
         FileManager.default.createFile(atPath: session.systemAudioURL.path, contents: Data(repeating: 0, count: 128))
-        let transferState = try await manager.finalizeSession(session, sampleRate: 16_000, systemDurationSeconds: 10, micDurationSeconds: nil)
+        let transferState = try await manager.finalizeSession(
+            session,
+            systemTrack: FinalizedAudioTrackInfo(
+                filename: "system.wav",
+                sampleRateHz: 16_000,
+                channels: 1,
+                durationFrames: 160_000,
+                durationSeconds: 10,
+                firstSampleHostTimeNs: 7_758_391_023_301_000,
+                startOffsetSeconds: 0,
+                latencyFrames: 0
+            ),
+            micTrack: nil
+        )
 
         let renamedState = try await manager.renameTransferState(transferState, to: "Renamed After Stop")
         let metadataData = try Data(contentsOf: renamedState.sessionFolderURL.appendingPathComponent("metadata.json"))
@@ -80,9 +111,55 @@ struct SessionManagerTests {
 
         let session = try await manager.createSession(settings: settings, sessionName: "Delete Me")
         FileManager.default.createFile(atPath: session.systemAudioURL.path, contents: Data(repeating: 0, count: 128))
-        let transferState = try await manager.finalizeSession(session, sampleRate: 16_000, systemDurationSeconds: 10, micDurationSeconds: nil)
+        let transferState = try await manager.finalizeSession(
+            session,
+            systemTrack: FinalizedAudioTrackInfo(
+                filename: "system.wav",
+                sampleRateHz: 16_000,
+                channels: 1,
+                durationFrames: 160_000,
+                durationSeconds: 10,
+                firstSampleHostTimeNs: 7_758_391_023_301_000,
+                startOffsetSeconds: 0,
+                latencyFrames: 0
+            ),
+            micTrack: nil
+        )
         try await manager.deleteTransferState(transferState)
 
         #expect(FileManager.default.fileExists(atPath: transferState.sessionFolderURL.path) == false)
+    }
+
+    @Test
+    func incompleteSessionsAreRecoveredWithMetadataWhenAudioExists() async throws {
+        let manager = SessionManager()
+        var settings = AppSettings()
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        settings.recordingDirectoryURL = root
+
+        let session = try await manager.createSession(settings: settings, sessionName: "Crash Recovery")
+        let recorder = try AudioTrackRecorder(outputURL: session.systemAudioURL, sampleRate: 16_000)
+        guard let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1, interleaved: true),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1_024) else {
+            Issue.record("Failed to create test buffer")
+            return
+        }
+        buffer.frameLength = 1_024
+        memset(buffer.int16ChannelData?[0], 0, Int(buffer.frameLength) * MemoryLayout<Int16>.size)
+        recorder.append(buffer: buffer, firstSampleHostTimeNs: 1234, latencyFrames: 0)
+        recorder.finish()
+
+        await manager.markIncompleteSessions(in: session.folderURL.deletingLastPathComponent())
+
+        let stateData = try Data(contentsOf: session.transferStateURL)
+        let recovered = try JSONDecoder().decode(SessionTransferState.self, from: stateData)
+        let metadataData = try Data(contentsOf: session.metadataURL)
+        let metadata = try JSONDecoder().decode(RecordingMetadata.self, from: metadataData)
+
+        #expect(recovered.stage == .transferFailed)
+        #expect(recovered.metadataFile != nil)
+        #expect(metadata.streamSync.alignedWavExport == false)
+        #expect(metadata.streamSync.syncConfidence == "low")
+        #expect(metadata.systemAudio.sampleRateHz == 16_000)
     }
 }

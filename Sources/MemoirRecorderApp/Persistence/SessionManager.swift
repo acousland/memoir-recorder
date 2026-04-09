@@ -1,3 +1,4 @@
+@preconcurrency import AVFoundation
 import Foundation
 
 actor SessionManager {
@@ -79,11 +80,11 @@ actor SessionManager {
 
     func finalizeSession(
         _ session: RecordingSession,
-        sampleRate: Int,
-        systemDurationSeconds: Double,
-        micDurationSeconds: Double?
+        systemTrack: FinalizedAudioTrackInfo,
+        micTrack: FinalizedAudioTrackInfo?
     ) throws -> SessionTransferState {
         let endedAt = Date()
+        let streamSync = buildStreamSyncMetadata(systemTrack: systemTrack, micTrack: micTrack)
         let metadata = RecordingMetadata(
             sessionID: session.sessionID,
             sessionName: session.sessionName,
@@ -91,17 +92,20 @@ actor SessionManager {
             recordingEndedAt: DateFormatting.iso8601String(from: endedAt),
             timezone: session.timezoneIdentifier,
             systemAudio: RecordingTrackMetadata(
-                filename: "system.wav",
-                sampleRateHz: sampleRate,
-                channels: 1,
-                durationSeconds: max(systemDurationSeconds, 0.01)
+                filename: systemTrack.filename,
+                sampleRateHz: systemTrack.sampleRateHz,
+                channels: systemTrack.channels,
+                durationSeconds: max(systemTrack.durationSeconds, 0.01)
             ),
-            micAudio: session.microphoneEnabled ? RecordingTrackMetadata(
-                filename: "mic.wav",
-                sampleRateHz: sampleRate,
-                channels: 1,
-                durationSeconds: max(micDurationSeconds ?? 0.01, 0.01)
-            ) : nil,
+            micAudio: micTrack.map {
+                RecordingTrackMetadata(
+                    filename: $0.filename,
+                    sampleRateHz: $0.sampleRateHz,
+                    channels: $0.channels,
+                    durationSeconds: max($0.durationSeconds, 0.01)
+                )
+            },
+            streamSync: streamSync,
             languageHint: nil,
             notes: nil
         )
@@ -185,6 +189,7 @@ actor SessionManager {
                 timezone: metadata.timezone,
                 systemAudio: metadata.systemAudio,
                 micAudio: metadata.micAudio,
+                streamSync: metadata.streamSync,
                 languageHint: metadata.languageHint,
                 notes: metadata.notes
             )
@@ -203,9 +208,10 @@ actor SessionManager {
     func markIncompleteSessions(in root: URL) async {
         let sessions = loadTransferStates(in: root)
         for var state in sessions where state.stage == .recording {
+            state = recoverIncompleteSession(state)
             state.stage = .transferFailed
             state.lastErrorCode = "incomplete_recording"
-            state.lastErrorMessage = "The app closed before the recording finished."
+            state.lastErrorMessage = "The app closed before the recording finished. Local files were recovered where possible."
             try? persistTransferState(state, at: state.sessionFolderURL.appendingPathComponent("transfer-state.json"))
         }
     }
@@ -267,5 +273,135 @@ actor SessionManager {
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
         return "Recording \(formatter.string(from: date))"
+    }
+
+    private func buildStreamSyncMetadata(
+        systemTrack: FinalizedAudioTrackInfo,
+        micTrack: FinalizedAudioTrackInfo?,
+        alignedWavExport: Bool = true,
+        syncConfidence: String? = nil
+    ) -> StreamSyncMetadata {
+        let sessionZeroHostTimeNs = min(
+            systemTrack.firstSampleHostTimeNs,
+            micTrack?.firstSampleHostTimeNs ?? systemTrack.firstSampleHostTimeNs
+        )
+
+        let systemStream = StreamSyncTrackMetadata(
+            firstSampleHostTimeNs: String(systemTrack.firstSampleHostTimeNs),
+            startOffsetSeconds: systemTrack.startOffsetSeconds,
+            sampleRateHz: systemTrack.sampleRateHz,
+            durationFrames: systemTrack.durationFrames,
+            latencyFrames: systemTrack.latencyFrames
+        )
+
+        let micStream = micTrack.map {
+            StreamSyncTrackMetadata(
+                firstSampleHostTimeNs: String($0.firstSampleHostTimeNs),
+                startOffsetSeconds: $0.startOffsetSeconds,
+                sampleRateHz: $0.sampleRateHz,
+                durationFrames: $0.durationFrames,
+                latencyFrames: $0.latencyFrames
+            )
+        }
+
+        let resolvedSyncConfidence: String
+        if let syncConfidence {
+            resolvedSyncConfidence = syncConfidence
+        } else if micTrack != nil {
+            resolvedSyncConfidence = "high"
+        } else {
+            resolvedSyncConfidence = "medium"
+        }
+
+        return StreamSyncMetadata(
+            schemaVersion: 1,
+            timeline: "host_time_ns",
+            sessionZeroHostTimeNs: String(sessionZeroHostTimeNs),
+            referenceStream: "system",
+            alignedWavExport: alignedWavExport,
+            driftCorrected: systemTrack.driftCorrected || (micTrack?.driftCorrected ?? false),
+            estimatedDriftPPM: micTrack?.estimatedDriftPPM ?? systemTrack.estimatedDriftPPM,
+            relativeOffsetToSystemSeconds: micTrack.map { $0.startOffsetSeconds - systemTrack.startOffsetSeconds },
+            syncConfidence: resolvedSyncConfidence,
+            echoCancellation: EchoCancellationMetadata(applied: false, mode: "none"),
+            streams: StreamSyncStreams(system: systemStream, mic: micStream)
+        )
+    }
+
+    private func recoverIncompleteSession(_ state: SessionTransferState) -> SessionTransferState {
+        var recoveredState = state
+        let endedAt = DateFormatting.iso8601String(from: Date())
+        recoveredState.endedAt = endedAt
+
+        let systemURL = state.sessionFolderURL.appendingPathComponent("system.wav")
+        let micURL = state.sessionFolderURL.appendingPathComponent("mic.wav")
+        let metadataURL = state.sessionFolderURL.appendingPathComponent("metadata.json")
+
+        let systemTrack = recoveredTrackInfo(filename: "system.wav", fileURL: systemURL)
+        let micTrack = recoveredTrackInfo(filename: "mic.wav", fileURL: micURL)
+
+        if let systemTrack {
+            let metadata = RecordingMetadata(
+                sessionID: state.sessionID,
+                sessionName: state.sessionName,
+                recordingStartedAt: state.startedAt,
+                recordingEndedAt: endedAt,
+                timezone: TimeZone.current.identifier,
+                systemAudio: RecordingTrackMetadata(
+                    filename: systemTrack.filename,
+                    sampleRateHz: systemTrack.sampleRateHz,
+                    channels: systemTrack.channels,
+                    durationSeconds: max(systemTrack.durationSeconds, 0.01)
+                ),
+                micAudio: micTrack.map {
+                    RecordingTrackMetadata(
+                        filename: $0.filename,
+                        sampleRateHz: $0.sampleRateHz,
+                        channels: $0.channels,
+                        durationSeconds: max($0.durationSeconds, 0.01)
+                    )
+                },
+                streamSync: buildStreamSyncMetadata(
+                    systemTrack: systemTrack,
+                    micTrack: micTrack,
+                    alignedWavExport: false,
+                    syncConfidence: "low"
+                ),
+                languageHint: nil,
+                notes: nil
+            )
+            if let metadataData = try? encoder.encode(metadata) {
+                try? metadataData.write(to: metadataURL, options: .atomic)
+                recoveredState.metadataFile = try? uploadFileState(for: metadataURL)
+            }
+            recoveredState.systemFile = try? uploadFileState(for: systemURL)
+            if micTrack != nil {
+                recoveredState.micFile = try? uploadFileState(for: micURL)
+            }
+        }
+
+        return recoveredState
+    }
+
+    private func recoveredTrackInfo(filename: String, fileURL: URL) -> FinalizedAudioTrackInfo? {
+        guard fileManager.fileExists(atPath: fileURL.path) else { return nil }
+        guard let audioFile = try? AVAudioFile(forReading: fileURL) else { return nil }
+
+        let durationFrames = Int(audioFile.length)
+        let sampleRateHz = Int(audioFile.processingFormat.sampleRate.rounded())
+        let durationSeconds = sampleRateHz > 0 ? Double(durationFrames) / Double(sampleRateHz) : 0
+
+        return FinalizedAudioTrackInfo(
+            filename: filename,
+            sampleRateHz: sampleRateHz,
+            channels: Int(audioFile.processingFormat.channelCount),
+            durationFrames: durationFrames,
+            durationSeconds: durationSeconds,
+            firstSampleHostTimeNs: 0,
+            startOffsetSeconds: 0,
+            latencyFrames: 0,
+            estimatedDriftPPM: 0,
+            driftCorrected: false
+        )
     }
 }

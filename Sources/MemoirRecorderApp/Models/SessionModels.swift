@@ -47,6 +47,7 @@ struct RecordingMetadata: Codable, Sendable, Equatable {
     let timezone: String
     let systemAudio: RecordingTrackMetadata
     let micAudio: RecordingTrackMetadata?
+    let streamSync: StreamSyncMetadata
     let languageHint: String?
     let notes: String?
 
@@ -58,6 +59,7 @@ struct RecordingMetadata: Codable, Sendable, Equatable {
         case timezone
         case systemAudio = "system_audio"
         case micAudio = "mic_audio"
+        case streamSync = "stream_sync"
         case languageHint = "language_hint"
         case notes
     }
@@ -74,6 +76,97 @@ struct RecordingTrackMetadata: Codable, Sendable, Equatable {
         case sampleRateHz = "sample_rate_hz"
         case channels
         case durationSeconds = "duration_seconds"
+    }
+}
+
+struct StreamSyncMetadata: Codable, Sendable, Equatable {
+    let schemaVersion: Int
+    let timeline: String
+    let sessionZeroHostTimeNs: String
+    let referenceStream: String
+    let alignedWavExport: Bool
+    let driftCorrected: Bool
+    let estimatedDriftPPM: Double
+    let relativeOffsetToSystemSeconds: Double?
+    let syncConfidence: String
+    let echoCancellation: EchoCancellationMetadata
+    let streams: StreamSyncStreams
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case timeline
+        case sessionZeroHostTimeNs = "session_zero_host_time_ns"
+        case referenceStream = "reference_stream"
+        case alignedWavExport = "aligned_wav_export"
+        case driftCorrected = "drift_corrected"
+        case estimatedDriftPPM = "estimated_drift_ppm"
+        case relativeOffsetToSystemSeconds = "relative_offset_to_system_seconds"
+        case syncConfidence = "sync_confidence"
+        case echoCancellation = "echo_cancellation"
+        case streams
+    }
+}
+
+struct EchoCancellationMetadata: Codable, Sendable, Equatable {
+    let applied: Bool
+    let mode: String
+}
+
+struct StreamSyncStreams: Codable, Sendable, Equatable {
+    let system: StreamSyncTrackMetadata
+    let mic: StreamSyncTrackMetadata?
+}
+
+struct StreamSyncTrackMetadata: Codable, Sendable, Equatable {
+    let firstSampleHostTimeNs: String
+    let startOffsetSeconds: Double
+    let sampleRateHz: Int
+    let durationFrames: Int
+    let latencyFrames: Int
+
+    enum CodingKeys: String, CodingKey {
+        case firstSampleHostTimeNs = "first_sample_host_time_ns"
+        case startOffsetSeconds = "start_offset_seconds"
+        case sampleRateHz = "sample_rate_hz"
+        case durationFrames = "duration_frames"
+        case latencyFrames = "latency_frames"
+    }
+}
+
+struct FinalizedAudioTrackInfo: Sendable, Equatable {
+    let filename: String
+    let sampleRateHz: Int
+    let channels: Int
+    let durationFrames: Int
+    let durationSeconds: Double
+    let firstSampleHostTimeNs: UInt64
+    let startOffsetSeconds: Double
+    let latencyFrames: Int
+    let estimatedDriftPPM: Double
+    let driftCorrected: Bool
+
+    init(
+        filename: String,
+        sampleRateHz: Int,
+        channels: Int,
+        durationFrames: Int,
+        durationSeconds: Double,
+        firstSampleHostTimeNs: UInt64,
+        startOffsetSeconds: Double,
+        latencyFrames: Int,
+        estimatedDriftPPM: Double = 0,
+        driftCorrected: Bool = false
+    ) {
+        self.filename = filename
+        self.sampleRateHz = sampleRateHz
+        self.channels = channels
+        self.durationFrames = durationFrames
+        self.durationSeconds = durationSeconds
+        self.firstSampleHostTimeNs = firstSampleHostTimeNs
+        self.startOffsetSeconds = startOffsetSeconds
+        self.latencyFrames = latencyFrames
+        self.estimatedDriftPPM = estimatedDriftPPM
+        self.driftCorrected = driftCorrected
     }
 }
 
