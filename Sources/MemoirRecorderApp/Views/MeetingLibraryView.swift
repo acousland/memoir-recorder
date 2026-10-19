@@ -205,7 +205,7 @@ struct MeetingLibraryView: View {
                         ForEach(TranscriptExportFormat.allCases, id: \.self) { format in
                             Button("Export \(format.rawValue)…") { export(document, as: format) }
                         }
-                    } label: { Label("Export", systemImage: "square.and.arrow.up") }.disabled(document.segments.isEmpty)
+                    } label: { Label("Export", systemImage: "square.and.arrow.up") }.fixedSize().disabled(document.segments.isEmpty)
                     Button {
                         if let data = try? TranscriptExportFormat.text.data(for: document), let text = String(data: data, encoding: .utf8) {
                             NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
