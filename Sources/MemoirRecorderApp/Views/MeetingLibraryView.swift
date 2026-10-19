@@ -154,6 +154,7 @@ struct MeetingLibraryView: View {
     }
 
     private var newMeeting: some View {
+        ScrollView {
         VStack(alignment: .leading, spacing: 22) {
             Image(systemName: "waveform").font(.system(size: 42, weight: .light)).foregroundStyle(.tint)
             VStack(alignment: .leading, spacing: 8) {
@@ -174,10 +175,12 @@ struct MeetingLibraryView: View {
             Text("Works with the audio from your meeting app. Transcription runs on your own processor Mac.")
                 .font(.caption).foregroundStyle(.secondary)
         }
-        .frame(maxWidth: 510, alignment: .leading).padding(48).frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: 510, alignment: .leading).padding(32).frame(maxWidth: .infinity)
+        }
     }
 
     private var recordingView: some View {
+        ScrollView {
         VStack(spacing: 24) {
             Image(systemName: "waveform.circle.fill").font(.system(size: 64)).foregroundStyle(.red)
             TextField("Meeting name", text: $model.recordingController.activeRecordingName).font(.title2).textFieldStyle(.roundedBorder)
@@ -191,7 +194,8 @@ struct MeetingLibraryView: View {
             } label: { Label(model.recordingController.lifecycle == .failed ? "Retry saving" : "Stop meeting", systemImage: "stop.circle.fill") }
                 .buttonStyle(.borderedProminent).tint(.red).controlSize(.large).disabled(model.recordingController.isBusy)
             if let error = model.recordingController.lastError { Text(error).foregroundStyle(.red).textSelection(.enabled) }
-        }.frame(maxWidth: 460).padding(48).frame(maxWidth: .infinity, maxHeight: .infinity)
+        }.frame(maxWidth: 460).padding(32).frame(maxWidth: .infinity)
+        }
     }
 
     private func transcript(_ document: MeetingDocument) -> some View {
