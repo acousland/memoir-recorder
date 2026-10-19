@@ -1,14 +1,16 @@
 # Memoir
 
-A local-first macOS menu bar meeting recorder. Captures system playback and an optional microphone into separate, aligned mono PCM WAV tracks. Requires macOS 15 or later; release builds currently target Apple Silicon.
+A private macOS meeting app backed by Memoir Processor. Its main window starts/stops capture, browses the processor's archive, displays timestamped transcripts, corrects speaker names, searches, copies and exports. Completed transcripts are cached on the recorder Mac for offline use. The menu bar still provides quick recording controls.
+
+This version processes transcripts after a meeting ends. It has no notepad or AI summaries. Transcription and authoritative storage run on Memoir Processor 1.2.0 or later; update the processor first. Capture saves system playback and an optional microphone into separate, aligned mono PCM WAV tracks. Requires macOS 15 or later; release builds currently target Apple Silicon.
 
 ## Use
 
-Open Memoir, choose a recording name if desired, and start recording from the menu bar. Grant Screen & System Audio Recording and microphone access when prompted. Recordings default to `~/Documents/Recordings`. Names are display metadata; renaming keeps the folder path stable.
+Open Memoir, choose a meeting name if desired, and start from its main window or menu bar. After stopping, select the meeting in the library to read its transcript. Grant Screen & System Audio Recording and microphone access when prompted. Recordings default to `~/Documents/Recordings`. Names are display metadata; renaming keeps the folder path stable.
 
 For processing, configure the processor URL and API token in Settings. The token is stored in Keychain. Test Connection verifies both service compatibility and authentication. Enable auto-upload to transfer completed recordings. Queued sessions are polled until they complete. Originals remain available locally.
 
-The processor creates a self-signed HTTPS certificate by default. Transfer its `tls/server.crt` to the recording Mac through a trusted channel, verify its fingerprint, and install/trust it in Keychain Access for SSL. Connect using a hostname or address listed on the certificate. Alternatively provision a trusted server certificate. Memoir does not bypass certificate validation. Regenerate/provision certificates deliberately when the hostname changes.
+With Tailscale running and HTTPS certificates enabled in its admin console, the processor obtains and renews a trusted certificate automatically. Use its full `https://<machine>.<tailnet>.ts.net:8765` URL and keep both Macs connected to Tailscale. Other deployments need a trusted certificate matching the configured hostname, or deliberate trust of the processor's fallback self-signed certificate. Memoir uses normal system certificate validation.
 
 ## Develop and test
 

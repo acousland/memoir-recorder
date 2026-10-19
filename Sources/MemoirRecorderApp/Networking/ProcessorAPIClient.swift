@@ -147,6 +147,34 @@ struct ProcessorAPIClient: Sendable {
         return try decode(ProcessorSessionStatusResponse.self, from: data, response: response, endpoint: "v1/sessions/\(sessionID)")
     }
 
+    func searchMeetings(query: String, offset: Int = 0) async throws -> [MeetingSummary] {
+        var request = try makeRequest(path: "v1/meetings/search", method: "POST")
+        request.httpBody = try encoder.encode(MeetingSearchRequest(query: query, offset: offset, limit: 100))
+        return try await sendJSON(request, responseType: [MeetingSummary].self)
+    }
+
+    func meetingDocument(id: String) async throws -> MeetingDocument {
+        let request = try makeRequest(path: "v1/meetings/\(id)", method: "GET")
+        return try await sendJSON(request, responseType: MeetingDocument.self)
+    }
+
+    func renameMeeting(id: String, title: String, revision: Int) async throws -> MeetingDocument {
+        var request = try makeRequest(path: "v1/meetings/\(id)/title", method: "POST")
+        request.httpBody = try encoder.encode(MeetingTitleRequest(title: title, expectedRevision: revision))
+        return try await sendJSON(request, responseType: MeetingDocument.self)
+    }
+
+    func renameSpeaker(id: String, speakerID: String, name: String, revision: Int) async throws -> MeetingDocument {
+        var request = try makeRequest(path: "v1/meetings/\(id)/speaker", method: "POST")
+        request.httpBody = try encoder.encode(MeetingSpeakerRequest(speakerID: speakerID, name: name, expectedRevision: revision))
+        return try await sendJSON(request, responseType: MeetingDocument.self)
+    }
+
+    func retryMeeting(id: String) async throws {
+        let request = try makeRequest(path: "v1/meetings/\(id)/retry", method: "POST")
+        _ = try await sendJSON(request, responseType: [String: String].self)
+    }
+
     private func makeRequest(path: String, method: String, authenticated: Bool = true) throws -> URLRequest {
         guard let url = URL(string: path, relativeTo: configuration.baseURL)?.absoluteURL else {
             throw ProcessorClientError.invalidBaseURL

@@ -1,9 +1,10 @@
-# Memoir 1.1.0
+# Memoir 1.2.0
 
-- Reliable padded audio export, owned capture buffers, and sample-based timing.
-- Guarded recording transitions, background finalization, and saving before quit.
-- Stable recording paths, upload recovery, and accurate completed status.
-- Sparkle updates with signed feeds and protection against restarting during a recording.
-- Developer ID signing and Apple notarization.
+- A new meeting window with quick capture still available from the menu bar.
+- Browse the processor's archive and read finished transcripts with timestamps and speaker labels.
+- Search all transcript text, find passages in a meeting, and correct titles or speaker names.
+- Copy transcripts or export text, Markdown, SRT and JSON.
+- Completed transcripts are cached privately on this Mac for offline access, separated by processor.
+- See upload/transcription progress, manually send saved recordings and retry failed transcription.
 
-Requires macOS 15 or later and Apple Silicon. System audio and microphone permissions are requested when recording starts.
+Update Memoir Processor to 1.2.0 first. Transcription runs on the processor after recording stops. No notepad or AI summaries. Requires macOS 15 or later.

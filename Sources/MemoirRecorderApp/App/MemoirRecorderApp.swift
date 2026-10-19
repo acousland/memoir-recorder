@@ -3,7 +3,7 @@ import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        NSApp.setActivationPolicy(.regular)
         _ = AppModel.shared.updater
         Task { @MainActor in
             let controller = AppModel.shared.recordingController
@@ -15,7 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
             Task { @MainActor in
-                self.showSettingsWindow()
+                AppModel.shared.showMeetings()
             }
         }
     }
@@ -41,17 +41,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag {
             Task { @MainActor in
-                self.showSettingsWindow()
+                AppModel.shared.showMeetings()
             }
         }
         return true
     }
 
-    @MainActor
-    private func showSettingsWindow() {
-        NSApp.activate(ignoringOtherApps: true)
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-    }
 }
 
 @main

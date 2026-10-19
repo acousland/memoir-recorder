@@ -26,6 +26,7 @@ final class RecordingController {
     var hasUnfinalizedRecording: Bool { currentSession != nil }
     var canStart: Bool { !isBusy && !isRecording && currentSession == nil }
     var recordingStartedAt: Date? { currentSession?.startedAt }
+    var recordingSessionID: String? { currentSession?.sessionID }
     var statusText = "Ready"
     var transferText = "Idle"
     var lastError: String?
@@ -140,6 +141,15 @@ final class RecordingController {
         guard let transferState = recentTransfers.first(where: { $0.sessionID == sessionID }) else { return }
         transferText = "Retrying upload"
         await transferManager.enqueue(transferState: transferState, settings: settingsStore.settings)
+        await refreshTransferStatuses()
+    }
+
+    func sendToProcessor(sessionID: String) async {
+        guard let state = recentTransfers.first(where: { $0.sessionID == sessionID }),
+              [.localSaveComplete, .transferFailed].contains(state.stage) else { return }
+        var settings = settingsStore.settings
+        settings.autoUploadEnabled = true
+        await transferManager.enqueue(transferState: state, settings: settings)
         await refreshTransferStatuses()
     }
 
