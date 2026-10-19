@@ -11,6 +11,7 @@ final class RecordingController {
     private let transferManager: ProcessorTransferManager
     private let settingsStore: SettingsStore
 
+    private var captureWarning: String?
     private var currentSession: RecordingSession?
     private var systemRecorder: AudioTrackRecorder?
     private var microphoneRecorder: AudioTrackRecorder?
@@ -18,7 +19,13 @@ final class RecordingController {
     private var microphoneCapture: MicrophoneCaptureSource?
     private var hasResumedPendingTransfers = false
 
-    var isRecording = false
+    enum Lifecycle { case idle, starting, recording, stopping, failed }
+    var lifecycle: Lifecycle = .idle
+    var isRecording: Bool { lifecycle == .recording }
+    var isBusy: Bool { lifecycle == .starting || lifecycle == .stopping }
+    var hasUnfinalizedRecording: Bool { currentSession != nil }
+    var canStart: Bool { !isBusy && !isRecording && currentSession == nil }
+    var recordingStartedAt: Date? { currentSession?.startedAt }
     var statusText = "Ready"
     var transferText = "Idle"
     var lastError: String?
@@ -37,22 +44,25 @@ final class RecordingController {
     }
 
     func start() async {
-        guard !isRecording else { return }
+        guard canStart else { return }
+        lifecycle = .starting
+        captureWarning = nil
         do {
             try await requestMicrophoneAccessIfNeeded()
             try await startRecording()
-            isRecording = true
+            lifecycle = .recording
             statusText = "Recording..."
             lastError = nil
         } catch {
             lastError = error.localizedDescription
+            lifecycle = .idle
             statusText = "Audio capture failed"
         }
     }
 
     func stop() async {
-        guard isRecording, let session = currentSession else { return }
-        isRecording = false
+        guard (isRecording || lifecycle == .failed), let session = currentSession else { return }
+        lifecycle = .stopping
         statusText = "Stopping..."
 
         await systemCapture?.stop()
@@ -65,24 +75,18 @@ final class RecordingController {
                 throw NSError(domain: "MemoirRecorder", code: 500, userInfo: [NSLocalizedDescriptionKey: "Missing system recording data."])
             }
             let sessionZeroHostTimeNs = resolvedSessionZeroHostTimeNs()
-            let microphoneStats = microphoneRecorder?.recordingStats()
-            let microphoneCorrectionPlan = microphoneStats.map {
-                AudioAlignment.plan(stats: $0, sessionZeroHostTimeNs: sessionZeroHostTimeNs)
-            }
-            let finalizedSystemTrack = try activeSystemRecorder.finalizeAlignedExport(
-                filename: "system.wav",
-                sessionZeroHostTimeNs: sessionZeroHostTimeNs,
-                correctionPlan: nil
-            )
-            let finalizedMicTrack = try microphoneRecorder?.finalizeAlignedExport(
-                filename: "mic.wav",
-                sessionZeroHostTimeNs: sessionZeroHostTimeNs,
-                correctionPlan: microphoneCorrectionPlan
-            )
+            let activeMicRecorder = microphoneRecorder
+            let (finalizedSystemTrack, finalizedMicTrack) = try await Task.detached(priority: .userInitiated) {
+                let micPlan = activeMicRecorder.map { AudioAlignment.plan(stats: $0.recordingStats(), sessionZeroHostTimeNs: sessionZeroHostTimeNs) }
+                let system = try activeSystemRecorder.finalizeAlignedExport(filename: "system.wav", sessionZeroHostTimeNs: sessionZeroHostTimeNs)
+                let mic = try activeMicRecorder?.finalizeAlignedExport(filename: "mic.wav", sessionZeroHostTimeNs: sessionZeroHostTimeNs, correctionPlan: micPlan)
+                return (system, mic)
+            }.value
             let transferState = try await sessionManager.finalizeSession(
                 session,
                 systemTrack: finalizedSystemTrack,
-                micTrack: finalizedMicTrack
+                micTrack: finalizedMicTrack,
+                notes: captureWarning
             )
             currentSession = nil
             systemRecorder = nil
@@ -90,6 +94,7 @@ final class RecordingController {
             systemCapture = nil
             microphoneCapture = nil
             activeRecordingName = ""
+            lifecycle = .idle
             statusText = "Recording saved"
             transferText = settingsStore.settings.autoUploadEnabled ? "Uploading to processor" : "Saved locally"
             sendNotification(title: "Recording saved", body: session.sessionName)
@@ -99,7 +104,8 @@ final class RecordingController {
             transferText = "Background transfer updated"
         } catch {
             lastError = error.localizedDescription
-            statusText = "Failed to finalize recording"
+            lifecycle = .failed
+            statusText = "Recording needs recovery. Retry saving before starting another."
         }
     }
 
@@ -123,6 +129,7 @@ final class RecordingController {
     }
 
     func refreshTransferStatuses() async {
+        await transferManager.refreshRemoteStatuses(settings: settingsStore.settings)
         let states = await sessionManager.loadTransferStates(in: settingsStore.settings.recordingDirectoryURL)
         recentTransfers = states.sorted {
             ($0.startedAtDate ?? .distantPast) > ($1.startedAtDate ?? .distantPast)
@@ -138,7 +145,7 @@ final class RecordingController {
 
     func renameStoppedTransfer(sessionID: String) async {
         guard let transferState = recentTransfers.first(where: { $0.sessionID == sessionID }) else { return }
-        guard transferState.canManage else { return }
+        guard transferState.canManage, !(await transferManager.isActive(sessionID: sessionID)) else { return }
         guard let newName = promptForRename(currentName: transferState.sessionName) else { return }
 
         do {
@@ -153,7 +160,7 @@ final class RecordingController {
 
     func deleteStoppedTransfer(sessionID: String) async {
         guard let transferState = recentTransfers.first(where: { $0.sessionID == sessionID }) else { return }
-        guard transferState.canManage else { return }
+        guard transferState.canManage, !(await transferManager.isActive(sessionID: sessionID)) else { return }
         guard confirmDelete(sessionName: transferState.sessionName) else { return }
 
         do {
@@ -167,7 +174,7 @@ final class RecordingController {
     }
 
     func renameCurrentRecording() async {
-        guard let currentSession else { return }
+        guard isRecording, let currentSession else { return }
         let trimmedName = activeRecordingName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else {
             activeRecordingName = currentSession.sessionName
@@ -199,6 +206,8 @@ final class RecordingController {
             self.activeRecordingName = session.sessionName
             self.systemRecorder = systemRecorder
             self.systemCapture = systemCapture
+            systemRecorder.onFailure = { [weak self] message in Task { @MainActor in await self?.captureFailed(message) } }
+            systemCapture.onFailure = { [weak self] message in Task { @MainActor in await self?.captureFailed(message) } }
 
             try await systemCapture.start { [weak systemRecorder] captured in
                 systemRecorder?.append(
@@ -211,6 +220,9 @@ final class RecordingController {
             if settings.microphoneEnabled, let micURL = session.microphoneAudioURL {
                 let micRecorder = try AudioTrackRecorder(outputURL: micURL, sampleRate: Double(settings.sampleRate))
                 let micCapture = MicrophoneCaptureSource()
+                micRecorder.onFailure = { [weak self] message in Task { @MainActor in await self?.captureFailed(message) } }
+                self.microphoneRecorder = micRecorder
+                self.microphoneCapture = micCapture
                 try micCapture.start { [weak micRecorder] captured in
                     micRecorder?.append(
                         buffer: captured.buffer,
@@ -226,6 +238,14 @@ final class RecordingController {
             await cleanupFailedRecordingStart()
             throw error
         }
+    }
+
+    private func captureFailed(_ message: String) async {
+        guard isRecording else { return }
+        lastError = message
+        captureWarning = message
+        await stop()
+        lastError = "Recording stopped: " + message
     }
 
     private func cleanupFailedRecordingStart() async {

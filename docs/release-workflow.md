@@ -1,27 +1,9 @@
-# Release Workflow
+# Release workflow
 
-GitHub Actions workflow:
+See [the README](../README.md#release-and-updates). The previous unsigned rolling release workflow has been removed. CI tests code; local scripts handle Developer ID signing, Apple notarization, stapling, Sparkle signing and deliberate publication.
 
-- runs `swift test`
-- builds `dist/Memoir.app`
-- packages both a zip archive and a dmg from the app bundle
-- uploads the bundle, zip, and dmg as workflow artifacts
-- refreshes a rolling GitHub Release at tag `latest` for every push to `main`
-- creates a versioned GitHub Release for tag pushes like `v1.0.0`
-- uploads the zip and dmg to both release types
-- marks the published release as the repository's latest release
+- `scripts/build-app.sh`: build and sign the app bundle.
+- `scripts/notarize-release.sh`: create verified notarized ZIP/DMG artifacts and a signed appcast.
+- `scripts/publish-release.sh`: publish the committed version and verified feed to the existing public GitHub repository.
 
-Local commands:
-
-```sh
-chmod +x scripts/build-app.sh scripts/package-release.sh
-./scripts/build-app.sh
-./scripts/package-release.sh
-```
-
-Notes:
-
-- the current workflow uses ad-hoc signing via `codesign --sign -`
-- that is fine for CI artifacts and local testing, but not enough for public distribution
-- for public releases, the next step is adding Developer ID signing and notarization secrets to the workflow
-- pushing to `main` now recreates the `latest` release so the Releases section always has a downloadable current build
+Never change a versioned archive after publication. Generate a new version/build number instead. The stable `updates` release contains the mutable appcast; its downloads point to immutable versioned releases. Keep the Sparkle private key in Keychain and secure backup. Only its public key belongs in source control.

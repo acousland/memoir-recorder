@@ -77,6 +77,7 @@ struct SettingsView: View {
                         saveMessage = "Settings saved"
                     }
 
+                    if let error = model.settingsStore.persistenceError { Text(error).foregroundStyle(.red) }
                     if !saveMessage.isEmpty {
                         Text(saveMessage)
                             .font(.caption)

@@ -9,6 +9,21 @@ struct AppSettings: Codable, Equatable {
     var processorBearerToken = ""
     var processorFriendlyName = ""
 
+    init() {}
+    enum CodingKeys: String, CodingKey {
+        case microphoneEnabled, recordingDirectoryBookmark, sampleRate, autoUploadEnabled, processorBaseURLString, processorBearerToken, processorFriendlyName
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        microphoneEnabled = try c.decodeIfPresent(Bool.self, forKey: .microphoneEnabled) ?? true
+        recordingDirectoryBookmark = try c.decodeIfPresent(Data.self, forKey: .recordingDirectoryBookmark)
+        sampleRate = try c.decodeIfPresent(Int.self, forKey: .sampleRate) ?? 16_000
+        autoUploadEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoUploadEnabled) ?? true
+        processorBaseURLString = try c.decodeIfPresent(String.self, forKey: .processorBaseURLString) ?? ""
+        processorBearerToken = try c.decodeIfPresent(String.self, forKey: .processorBearerToken) ?? ""
+        processorFriendlyName = try c.decodeIfPresent(String.self, forKey: .processorFriendlyName) ?? ""
+    }
+
     var recordingDirectoryURL: URL {
         get {
             var isStale = false

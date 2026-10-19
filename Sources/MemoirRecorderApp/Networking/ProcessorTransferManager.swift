@@ -1,12 +1,16 @@
 import Foundation
 
 actor ProcessorTransferManager {
+    private var isRefreshing = false
+    private var activeSessions = Set<String>()
     private let sessionManager: SessionManager
     private let retrySchedule: [TimeInterval] = [0, 2, 5, 15, 30, 60]
 
     init(sessionManager: SessionManager) {
         self.sessionManager = sessionManager
     }
+
+    func isActive(sessionID: String) -> Bool { activeSessions.contains(sessionID) }
 
     func resumePendingTransfers(settings: AppSettings) async {
         guard settings.autoUploadEnabled else { return }
@@ -23,10 +27,40 @@ actor ProcessorTransferManager {
 
     func testConnection(settings: AppSettings) async throws -> ProcessorHealthResponse {
         let client = try makeClient(settings: settings)
-        return try await client.healthCheck()
+        let health = try await client.healthCheck()
+        try await client.verifyAuthentication()
+        return health
+    }
+
+    func refreshRemoteStatuses(settings: AppSettings) async {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
+        guard let client = try? makeClient(settings: settings) else { return }
+        let states = await sessionManager.loadTransferStates(in: settings.recordingDirectoryURL)
+        for var state in states where [.queuedForProcessing, .processing, .completeAccepted].contains(state.stage) && !activeSessions.contains(state.sessionID) {
+            guard let status = try? await client.getSessionStatus(sessionID: state.sessionID) else { continue }
+            update(&state, from: status)
+            try? await sessionManager.persist(state)
+        }
+    }
+
+    private func update(_ state: inout SessionTransferState, from status: ProcessorSessionStatusResponse) {
+        state.remoteIngestionState = status.ingestionState
+        state.remoteProcessingState = status.processingState
+        switch status.processingState {
+        case "completed": state.stage = .completed
+        case "failed": state.stage = .processingFailed
+        case "queued", "retry_pending", nil: state.stage = .queuedForProcessing
+        default: state.stage = .processing
+        }
+        state.lastErrorCode = status.error?.code
+        state.lastErrorMessage = status.error?.message
     }
 
     private func upload(state originalState: SessionTransferState, settings: AppSettings) async {
+        guard activeSessions.insert(originalState.sessionID).inserted else { return }
+        defer { activeSessions.remove(originalState.sessionID) }
         var state = originalState
 
         do {
@@ -36,8 +70,10 @@ actor ProcessorTransferManager {
                 throw ProcessorClientError.apiVersionMismatch
             }
 
-            state.stage = .preparingTransfer
-            try await sessionManager.persist(state)
+            if state.metadataUploadPath == nil {
+                state.stage = .preparingTransfer
+                try await sessionManager.persist(state)
+            }
 
             let metadataURL = state.sessionFolderURL.appendingPathComponent("metadata.json")
             let systemURL = state.sessionFolderURL.appendingPathComponent("system.wav")
@@ -47,7 +83,7 @@ actor ProcessorTransferManager {
             let createIdempotencyKey = state.createIdempotencyKey
             let completeIdempotencyKey = state.completeIdempotencyKey
 
-            if state.stage == .preparingTransfer || state.stage == .localSaveComplete || state.stage == .transferFailed {
+            if state.metadataUploadPath == nil {
                 let createRequest = CreateSessionRequest(
                     sessionID: sessionID,
                     sessionName: state.sessionName,
@@ -77,6 +113,20 @@ actor ProcessorTransferManager {
                 )
                 state.stage = .remoteSessionCreated
                 try await sessionManager.persist(state)
+            }
+
+            if let remote = try? await client.getSessionStatus(sessionID: sessionID), remote.ingestionState == "ready_for_processing" {
+                update(&state, from: remote)
+                try await sessionManager.persist(state)
+                return
+            }
+            if let remote = try? await client.getSessionStatus(sessionID: sessionID) {
+                if remote.receivedFiles.mic { state.stage = .micUploaded }
+                else if remote.receivedFiles.system { state.stage = .systemUploaded }
+                else if remote.receivedFiles.metadata { state.stage = .metadataUploaded }
+                else { state.stage = .remoteSessionCreated }
+            } else if state.stage == .transferFailed || state.stage == .preparingTransfer {
+                state.stage = .remoteSessionCreated
             }
 
             if state.stage == .remoteSessionCreated {
@@ -180,18 +230,7 @@ actor ProcessorTransferManager {
 
             let status = try? await client.getSessionStatus(sessionID: state.sessionID)
             if let status {
-                state.remoteIngestionState = status.ingestionState
-                state.remoteProcessingState = status.processingState
-                switch status.processingState {
-                case "failed":
-                    state.stage = .processingFailed
-                case "queued", nil:
-                    state.stage = .queuedForProcessing
-                default:
-                    state.stage = .processing
-                }
-                state.lastErrorCode = status.error?.code
-                state.lastErrorMessage = status.error?.message
+                update(&state, from: status)
                 try await sessionManager.persist(state)
             }
 
@@ -227,7 +266,7 @@ actor ProcessorTransferManager {
 
     private func shouldResume(_ state: SessionTransferState) -> Bool {
         switch state.stage {
-        case .recording, .queuedForProcessing, .processing, .processingFailed:
+        case .recording, .queuedForProcessing, .processing, .processingFailed, .completed:
             false
         default:
             true

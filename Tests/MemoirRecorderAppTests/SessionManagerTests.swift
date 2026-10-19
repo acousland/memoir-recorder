@@ -64,7 +64,7 @@ struct SessionManagerTests {
             .first(where: { $0.sessionID == renamed.sessionID })
 
         #expect(renamed.sessionName == renamedName)
-        #expect(renamed.folderURL.lastPathComponent.contains(DateFormatting.sanitize(renamedName)))
+        #expect(renamed.folderURL == session.folderURL)
         #expect(renamedTransferState?.sessionName == renamedName)
         #expect(renamedTransferState?.sessionFolderPath == renamed.folderURL.path)
     }
@@ -98,7 +98,7 @@ struct SessionManagerTests {
         let metadata = try JSONDecoder().decode(RecordingMetadata.self, from: metadataData)
 
         #expect(renamedState.sessionName == "Renamed After Stop")
-        #expect(renamedState.sessionFolderURL.lastPathComponent.contains("Renamed-After-Stop"))
+        #expect(renamedState.sessionFolderURL == session.folderURL)
         #expect(metadata.sessionName == "Renamed After Stop")
     }
 

@@ -4,6 +4,11 @@ import Observation
 @MainActor
 @Observable
 final class AppModel {
+    static let shared = AppModel()
+    @ObservationIgnored lazy var updater = AppUpdater(isBusy: { [weak self] in
+        guard let controller = self?.recordingController else { return false }
+        return controller.isBusy || controller.hasUnfinalizedRecording
+    })
     var settingsStore: SettingsStore
     var recordingController: RecordingController
 

@@ -18,6 +18,9 @@ struct StatusMenuView: View {
                     .disabled(model.recordingController.isRecording)
             }
 
+            if let started = model.recordingController.recordingStartedAt {
+                Text(started, style: .timer).monospacedDigit()
+            }
             Text(model.recordingController.statusText)
                 .font(.subheadline)
             Text(model.recordingController.transferText)
@@ -50,10 +53,13 @@ struct StatusMenuView: View {
                 Button("Stop Recording") {
                     Task { await model.recordingController.stop() }
                 }
+            } else if model.recordingController.hasUnfinalizedRecording {
+                Button("Retry Saving Recording") { Task { await model.recordingController.stop() } }
+                    .disabled(model.recordingController.isBusy)
             } else {
                 Button("Start Recording") {
                     Task { await model.recordingController.start() }
-                }
+                }.disabled(!model.recordingController.canStart)
             }
 
             UploadStatusListView(model: model, maxItems: 3)
@@ -63,15 +69,13 @@ struct StatusMenuView: View {
                 openSettings()
             }
 
+            CheckForUpdatesView(updater: model.updater)
+
             Button("Quit") {
                 NSApplication.shared.terminate(nil)
             }
         }
         .frame(minWidth: 280)
-        .task {
-            await model.recordingController.resumePendingTransfers()
-            await model.recordingController.refreshTransferStatuses()
-        }
         .padding()
     }
 }

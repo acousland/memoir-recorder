@@ -34,6 +34,8 @@ enum ProcessorClientError: LocalizedError, Sendable {
         switch self {
         case let .remote(_, _, retryable):
             retryable
+        case .notConfigured, .invalidBaseURL, .apiVersionMismatch, .malformedSuccessResponse:
+            false
         default:
             true
         }
@@ -67,6 +69,12 @@ struct ProcessorAPIClient: Sendable {
             throw ProcessorClientError.apiVersionMismatch
         }
         return health
+    }
+
+    func verifyAuthentication() async throws {
+        let request = try makeRequest(path: "v1/connection", method: "GET")
+        let (data, response) = try await session.data(for: request)
+        _ = try decode([String: String].self, from: data, response: response, endpoint: "v1/connection")
     }
 
     func createSession(

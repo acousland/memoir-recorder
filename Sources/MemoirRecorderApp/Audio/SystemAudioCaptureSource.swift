@@ -2,7 +2,7 @@ import AVFoundation
 import Foundation
 @preconcurrency import ScreenCaptureKit
 
-final class SystemAudioCaptureSource: NSObject, SCStreamOutput, @unchecked Sendable {
+final class SystemAudioCaptureSource: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     struct CapturedBuffer: @unchecked Sendable {
         let buffer: AVAudioPCMBuffer
         let firstSampleHostTimeNs: UInt64?
@@ -26,6 +26,7 @@ final class SystemAudioCaptureSource: NSObject, SCStreamOutput, @unchecked Senda
     private let sampleQueue = DispatchQueue(label: "memoir.audio.system")
     private var handler: ((CapturedBuffer) -> Void)?
     private var stream: SCStream?
+    var onFailure: (@Sendable (String) -> Void)?
 
     func start(handler: @escaping @Sendable (CapturedBuffer) -> Void) async throws {
         self.handler = handler
@@ -51,7 +52,7 @@ final class SystemAudioCaptureSource: NSObject, SCStreamOutput, @unchecked Senda
         configuration.channelCount = 2
         configuration.excludesCurrentProcessAudio = false
 
-        let stream = SCStream(filter: filter, configuration: configuration, delegate: nil)
+        let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
         try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: sampleQueue)
         self.stream = stream
         try await stream.startCapture()
@@ -60,7 +61,11 @@ final class SystemAudioCaptureSource: NSObject, SCStreamOutput, @unchecked Senda
     func stop() async {
         try? await stream?.stopCapture()
         stream = nil
-        handler = nil
+        sampleQueue.sync { handler = nil }
+    }
+
+    func stream(_ stream: SCStream, didStopWithError error: Error) {
+        onFailure?(error.localizedDescription)
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of outputType: SCStreamOutputType) {
@@ -77,7 +82,9 @@ final class SystemAudioCaptureSource: NSObject, SCStreamOutput, @unchecked Senda
                 else {
                     return
                 }
-                let hostTimeNs = DispatchTime.now().uptimeNanoseconds
+                let timestamp = sampleBuffer.presentationTimeStamp
+                let seconds = CMTimeGetSeconds(timestamp)
+                let hostTimeNs = timestamp.isValid && seconds.isFinite && seconds >= 0 ? UInt64((seconds * 1_000_000_000).rounded()) : nil
                 handler?(
                     CapturedBuffer(
                         buffer: pcmBuffer,

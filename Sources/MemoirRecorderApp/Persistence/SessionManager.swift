@@ -81,7 +81,8 @@ actor SessionManager {
     func finalizeSession(
         _ session: RecordingSession,
         systemTrack: FinalizedAudioTrackInfo,
-        micTrack: FinalizedAudioTrackInfo?
+        micTrack: FinalizedAudioTrackInfo?,
+        notes: String? = nil
     ) throws -> SessionTransferState {
         let endedAt = Date()
         let streamSync = buildStreamSyncMetadata(systemTrack: systemTrack, micTrack: micTrack)
@@ -107,7 +108,7 @@ actor SessionManager {
             },
             streamSync: streamSync,
             languageHint: nil,
-            notes: nil
+            notes: notes
         )
 
         let metadataData = try encoder.encode(metadata)
@@ -135,14 +136,7 @@ actor SessionManager {
             return session
         }
 
-        let parentURL = session.folderURL.deletingLastPathComponent()
-        let desiredFolderURL = parentURL.appendingPathComponent(
-            DateFormatting.sessionFolderName(for: session.startedAt, sessionName: trimmedName),
-            isDirectory: true
-        )
-        let destinationFolderURL = try uniqueFolderURL(preferred: desiredFolderURL, excluding: session.folderURL)
-
-        try fileManager.moveItem(at: session.folderURL, to: destinationFolderURL)
+        let destinationFolderURL = session.folderURL
 
         let renamedSession = session.renamed(to: trimmedName, folderURL: destinationFolderURL)
         var transferState = try loadTransferState(at: renamedSession.transferStateURL)
@@ -159,19 +153,15 @@ actor SessionManager {
             return transferState
         }
 
-        guard let startedAt = DateFormatting.parseISO8601(transferState.startedAt) else {
+        guard DateFormatting.parseISO8601(transferState.startedAt) != nil else {
             throw CocoaError(.fileReadCorruptFile)
         }
 
         let currentFolderURL = transferState.sessionFolderURL
-        let parentURL = currentFolderURL.deletingLastPathComponent()
-        let desiredFolderURL = parentURL.appendingPathComponent(
-            DateFormatting.sessionFolderName(for: startedAt, sessionName: trimmedName),
-            isDirectory: true
-        )
-        let destinationFolderURL = try uniqueFolderURL(preferred: desiredFolderURL, excluding: currentFolderURL)
-
-        try fileManager.moveItem(at: currentFolderURL, to: destinationFolderURL)
+        guard transferState.metadataUploadPath == nil else {
+            throw NSError(domain: "MemoirRecorder", code: 409, userInfo: [NSLocalizedDescriptionKey: "This recording has already been registered with the processor. Its upload name cannot be changed."])
+        }
+        let destinationFolderURL = currentFolderURL
 
         let renamedStateURL = destinationFolderURL.appendingPathComponent("transfer-state.json")
         var renamedTransferState = try loadTransferState(at: renamedStateURL)
@@ -197,11 +187,19 @@ actor SessionManager {
             try metadataData.write(to: metadataURL, options: .atomic)
         }
 
+        if fileManager.fileExists(atPath: metadataURL.path) {
+            renamedTransferState.metadataFile = try uploadFileState(for: metadataURL)
+        }
         try persistTransferState(renamedTransferState, at: renamedStateURL)
         return renamedTransferState
     }
 
     func deleteTransferState(_ transferState: SessionTransferState) throws {
+        let stateURL = transferState.sessionFolderURL.appendingPathComponent("transfer-state.json")
+        let current = try loadTransferState(at: stateURL)
+        guard current.canManage else {
+            throw NSError(domain: "MemoirRecorder", code: 409, userInfo: [NSLocalizedDescriptionKey: "Wait for this recording's transfer to finish."])
+        }
         try fileManager.removeItem(at: transferState.sessionFolderURL)
     }
 

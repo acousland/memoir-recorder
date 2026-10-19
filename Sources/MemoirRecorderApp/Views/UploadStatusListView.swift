@@ -66,7 +66,7 @@ struct UploadStatusListView: View {
 
     private func statusColor(for stage: TransferStage) -> Color {
         switch stage {
-        case .completeAccepted, .queuedForProcessing, .processing:
+        case .completeAccepted, .queuedForProcessing, .processing, .completed:
             .green
         case .processingFailed, .transferFailed:
             .red

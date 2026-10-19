@@ -15,6 +15,23 @@ final class AudioTrackRecorder: @unchecked Sendable {
     private var firstSampleHostTimeNs: UInt64?
     private var lastSampleHostTimeNs: UInt64?
     private var latencyFrames: Int = 0
+    private var writeError: Error?
+    private var finalizedTrack: FinalizedAudioTrackInfo?
+    private let pendingLock = NSLock()
+    private var pendingBuffers = 0
+    var onFailure: (@Sendable (String) -> Void)?
+
+    static func ownedCopy(of buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        guard let copy = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength) else { return nil }
+        copy.frameLength = buffer.frameLength
+        let source = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: buffer.audioBufferList))
+        let destination = UnsafeMutableAudioBufferListPointer(copy.mutableAudioBufferList)
+        for index in source.indices {
+            guard let src = source[index].mData, let dst = destination[index].mData else { return nil }
+            memcpy(dst, src, Int(source[index].mDataByteSize))
+        }
+        return copy
+    }
 
     struct RecordingStats: Sendable {
         let firstSampleHostTimeNs: UInt64?
@@ -51,13 +68,31 @@ final class AudioTrackRecorder: @unchecked Sendable {
     }
 
     func append(buffer: AVAudioPCMBuffer, firstSampleHostTimeNs: UInt64?, latencyFrames: Int) {
+        guard let owned = Self.ownedCopy(of: buffer) else {
+            onFailure?("Unable to copy captured audio.")
+            return
+        }
+        pendingLock.lock()
+        guard pendingBuffers < 256 else {
+            pendingLock.unlock()
+            onFailure?("Audio storage cannot keep up with recording.")
+            return
+        }
+        pendingBuffers += 1
+        pendingLock.unlock()
         queue.async {
+            defer {
+                self.pendingLock.lock()
+                self.pendingBuffers -= 1
+                self.pendingLock.unlock()
+            }
+            guard self.writeError == nil else { return }
             do {
                 if self.firstSampleHostTimeNs == nil, let firstSampleHostTimeNs {
                     self.firstSampleHostTimeNs = firstSampleHostTimeNs
-                    self.latencyFrames = latencyFrames
+                    self.latencyFrames = Int((Double(latencyFrames) * self.targetFormat.sampleRate / owned.format.sampleRate).rounded())
                 }
-                let outputBuffer = try self.convert(buffer: buffer)
+                let outputBuffer = try self.convert(buffer: owned)
                 if outputBuffer.frameLength > 0 {
                     try self.audioFile?.write(from: outputBuffer)
                     self.totalFramesWritten += AVAudioFramePosition(outputBuffer.frameLength)
@@ -67,13 +102,33 @@ final class AudioTrackRecorder: @unchecked Sendable {
                     }
                 }
             } catch {
-                NSLog("AudioTrackRecorder append failed: %@", error.localizedDescription)
+                self.writeError = error
+                self.onFailure?(error.localizedDescription)
             }
         }
     }
 
     func finish() {
         queue.sync {
+            if let converter, writeError == nil, audioFile != nil {
+                do {
+                    while true {
+                        guard let tail = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: 8192) else { break }
+                        var error: NSError?
+                        let status = converter.convert(to: tail, error: &error) { _, outStatus in
+                            outStatus.pointee = .endOfStream
+                            return nil
+                        }
+                        if let error { throw error }
+                        if tail.frameLength > 0 {
+                            try audioFile?.write(from: tail)
+                            totalFramesWritten += AVAudioFramePosition(tail.frameLength)
+                            if let last = lastSampleHostTimeNs { lastSampleHostTimeNs = last + UInt64((Double(tail.frameLength) / targetFormat.sampleRate * 1_000_000_000).rounded()) }
+                        }
+                        if status == .endOfStream || tail.frameLength == 0 { break }
+                    }
+                } catch { writeError = error; onFailure?(error.localizedDescription) }
+            }
             audioFile = nil
             converter = nil
         }
@@ -102,6 +157,25 @@ final class AudioTrackRecorder: @unchecked Sendable {
         sessionZeroHostTimeNs: UInt64,
         correctionPlan: AudioAlignmentPlan? = nil
     ) throws -> FinalizedAudioTrackInfo {
+        if let finalizedTrack { return finalizedTrack }
+        let backup = outputURL.appendingPathExtension("unmodified.wav")
+        if !FileManager.default.fileExists(atPath: backup.path) { try FileManager.default.copyItem(at: outputURL, to: backup) }
+        do {
+            let result = try performAlignedExport(filename: filename, sessionZeroHostTimeNs: sessionZeroHostTimeNs, correctionPlan: correctionPlan)
+            try? FileManager.default.removeItem(at: backup)
+            return result
+        } catch {
+            // Keep the original available for another save attempt, even if exporting failed halfway through.
+            let recovery = outputURL.appendingPathExtension("recovery.wav")
+            try? FileManager.default.removeItem(at: recovery)
+            if (try? FileManager.default.copyItem(at: backup, to: recovery)) != nil {
+                _ = try? FileManager.default.replaceItemAt(outputURL, withItemAt: recovery)
+            }
+            throw error
+        }
+    }
+
+    private func performAlignedExport(filename: String, sessionZeroHostTimeNs: UInt64, correctionPlan: AudioAlignmentPlan?) throws -> FinalizedAudioTrackInfo {
         let snapshot = queue.sync {
             (
                 firstSampleHostTimeNs: self.firstSampleHostTimeNs ?? sessionZeroHostTimeNs,
@@ -115,7 +189,7 @@ final class AudioTrackRecorder: @unchecked Sendable {
             try applyDriftCorrection(correctionRatio: correctionPlan.correctionRatio)
         }
 
-        let startOffsetSeconds = max(0, Double(snapshot.firstSampleHostTimeNs &- sessionZeroHostTimeNs) / 1_000_000_000)
+        let startOffsetSeconds = max(0, Double(snapshot.firstSampleHostTimeNs >= sessionZeroHostTimeNs ? snapshot.firstSampleHostTimeNs - sessionZeroHostTimeNs : 0) / 1_000_000_000)
         let paddingFrames = Int((startOffsetSeconds * Double(snapshot.sampleRateHz)).rounded())
         if paddingFrames > 0 {
             try prependSilence(frames: paddingFrames)
@@ -125,7 +199,10 @@ final class AudioTrackRecorder: @unchecked Sendable {
         let durationFrames = Int(file.length)
         let durationSeconds = Double(durationFrames) / targetFormat.sampleRate
 
-        return FinalizedAudioTrackInfo(
+        guard durationFrames > 0 else {
+            throw NSError(domain: "MemoirRecorder", code: -20, userInfo: [NSLocalizedDescriptionKey: "The recording contains no audio samples."])
+        }
+        let track = FinalizedAudioTrackInfo(
             filename: filename,
             sampleRateHz: snapshot.sampleRateHz,
             channels: 1,
@@ -137,6 +214,8 @@ final class AudioTrackRecorder: @unchecked Sendable {
             estimatedDriftPPM: correctionPlan?.estimatedDriftPPM ?? 0,
             driftCorrected: correctionPlan?.shouldCorrectDrift ?? false
         )
+        finalizedTrack = track
+        return track
     }
 
     private func convert(buffer: AVAudioPCMBuffer) throws -> AVAudioPCMBuffer {
@@ -146,6 +225,7 @@ final class AudioTrackRecorder: @unchecked Sendable {
 
         if converter == nil || converter?.inputFormat != buffer.format || converter?.outputFormat != targetFormat {
             converter = AVAudioConverter(from: buffer.format, to: targetFormat)
+            converter?.primeMethod = .none
         }
 
         guard let converter else {
@@ -186,8 +266,8 @@ final class AudioTrackRecorder: @unchecked Sendable {
         try? FileManager.default.removeItem(at: paddedURL)
         try? FileManager.default.removeItem(at: backupURL)
 
-        let sourceFile = try AVAudioFile(forReading: outputURL)
-        let destinationFile = try AVAudioFile(
+        let sourceFile = try AVAudioFile(forReading: outputURL, commonFormat: .pcmFormatInt16, interleaved: true)
+        var destinationFile: AVAudioFile? = try AVAudioFile(
             forWriting: paddedURL,
             settings: sourceFile.fileFormat.settings,
             commonFormat: .pcmFormatInt16,
@@ -202,21 +282,23 @@ final class AudioTrackRecorder: @unchecked Sendable {
             }
             silenceBuffer.frameLength = AVAudioFrameCount(chunkFrames)
             memset(silenceBuffer.int16ChannelData?[0], 0, chunkFrames * MemoryLayout<Int16>.size)
-            try destinationFile.write(from: silenceBuffer)
+            try destinationFile!.write(from: silenceBuffer)
             remainingSilenceFrames -= chunkFrames
         }
 
-        while true {
-            guard let buffer = AVAudioPCMBuffer(pcmFormat: sourceFile.processingFormat, frameCapacity: 8_192) else {
+        while sourceFile.framePosition < sourceFile.length {
+            let frames = AVAudioFrameCount(min(8_192, sourceFile.length - sourceFile.framePosition))
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: sourceFile.processingFormat, frameCapacity: frames) else {
                 throw NSError(domain: "MemoirRecorder", code: -11)
             }
-            try sourceFile.read(into: buffer)
+            try sourceFile.read(into: buffer, frameCount: frames)
             if buffer.frameLength == 0 {
                 break
             }
-            try destinationFile.write(from: buffer)
+            try destinationFile!.write(from: buffer)
         }
 
+        destinationFile = nil
         _ = try FileManager.default.replaceItemAt(
             outputURL,
             withItemAt: paddedURL,
@@ -228,86 +310,40 @@ final class AudioTrackRecorder: @unchecked Sendable {
     }
 
     private func applyDriftCorrection(correctionRatio: Double) throws {
-        guard correctionRatio.isFinite, correctionRatio > 0, abs(correctionRatio - 1) > 0.000_001 else {
-            return
-        }
-
-        let correctedURL = outputURL.deletingLastPathComponent().appendingPathComponent("\(outputURL.deletingPathExtension().lastPathComponent)-corrected.wav")
-        let backupURL = outputURL.deletingLastPathComponent().appendingPathComponent("\(outputURL.deletingPathExtension().lastPathComponent)-backup.wav")
-
+        guard correctionRatio.isFinite, (0.95...1.05).contains(correctionRatio), abs(correctionRatio - 1) > 0.000_001 else { return }
+        let correctedURL = outputURL.appendingPathExtension("corrected.wav")
         try? FileManager.default.removeItem(at: correctedURL)
-        try? FileManager.default.removeItem(at: backupURL)
-
-        let sourceFile = try AVAudioFile(forReading: outputURL)
-        let virtualSourceSampleRate = targetFormat.sampleRate / correctionRatio
-        guard let virtualSourceFormat = AVAudioFormat(
-            commonFormat: .pcmFormatInt16,
-            sampleRate: virtualSourceSampleRate,
-            channels: 1,
-            interleaved: true
-        ), let converter = AVAudioConverter(from: virtualSourceFormat, to: targetFormat) else {
-            throw NSError(domain: "MemoirRecorder", code: -12)
-        }
-
-        let destinationFile = try AVAudioFile(
-            forWriting: correctedURL,
-            settings: sourceFile.fileFormat.settings,
-            commonFormat: .pcmFormatInt16,
-            interleaved: true
-        )
-
-        while true {
-            guard let sourceBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: 8_192) else {
-                throw NSError(domain: "MemoirRecorder", code: -13)
-            }
-            try sourceFile.read(into: sourceBuffer)
-            if sourceBuffer.frameLength == 0 {
-                break
-            }
-
-            guard let virtualBuffer = AVAudioPCMBuffer(pcmFormat: virtualSourceFormat, frameCapacity: sourceBuffer.frameLength) else {
+        let source = try AVAudioFile(forReading: outputURL, commonFormat: .pcmFormatInt16, interleaved: true)
+        guard source.length > 0 else { return }
+        var destination: AVAudioFile? = try AVAudioFile(forWriting: correctedURL, settings: source.fileFormat.settings, commonFormat: .pcmFormatInt16, interleaved: true)
+        let outputFrames = Int64((Double(source.length) * correctionRatio).rounded())
+        var position: Int64 = 0
+        // Bounded, continuous interpolation avoids converter priming losses at chunk boundaries.
+        while position < outputFrames {
+            let count = Int(min(8192, outputFrames - position))
+            let first = min(source.length - 1, Int64(floor(Double(position) / correctionRatio)))
+            let last = min(source.length - 1, Int64(floor(Double(position + Int64(count - 1)) / correctionRatio)) + 1)
+            let inputCount = AVAudioFrameCount(last - first + 1)
+            guard let input = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: inputCount),
+                  let output = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: AVAudioFrameCount(count)) else {
                 throw NSError(domain: "MemoirRecorder", code: -14)
             }
-            virtualBuffer.frameLength = sourceBuffer.frameLength
-            memcpy(
-                virtualBuffer.int16ChannelData?[0],
-                sourceBuffer.int16ChannelData?[0],
-                Int(sourceBuffer.frameLength) * MemoryLayout<Int16>.size
-            )
-
-            let outputCapacity = AVAudioFrameCount(Double(sourceBuffer.frameLength) * correctionRatio + 64)
-            guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outputCapacity) else {
-                throw NSError(domain: "MemoirRecorder", code: -15)
+            source.framePosition = first
+            try source.read(into: input, frameCount: inputCount)
+            output.frameLength = AVAudioFrameCount(count)
+            guard let inputSamples = input.int16ChannelData?[0], let outputSamples = output.int16ChannelData?[0] else { throw NSError(domain: "MemoirRecorder", code: -15) }
+            for index in 0..<count {
+                let sourcePosition = min(Double(source.length - 1), Double(position + Int64(index)) / correctionRatio) - Double(first)
+                let left = min(Int(input.frameLength) - 1, Int(sourcePosition))
+                let right = min(Int(input.frameLength) - 1, left + 1)
+                let fraction = sourcePosition - Double(left)
+                let value = Double(inputSamples[left]) * (1 - fraction) + Double(inputSamples[right]) * fraction
+                outputSamples[index] = Int16(clamping: Int(value.rounded()))
             }
-
-            var conversionError: NSError?
-            let inputState = InputState()
-            converter.convert(to: outputBuffer, error: &conversionError) { _, outStatus in
-                defer { inputState.didProvideInput = true }
-                guard !inputState.didProvideInput else {
-                    outStatus.pointee = .noDataNow
-                    return nil
-                }
-                outStatus.pointee = .haveData
-                return virtualBuffer
-            }
-
-            if let conversionError {
-                throw conversionError
-            }
-
-            if outputBuffer.frameLength > 0 {
-                try destinationFile.write(from: outputBuffer)
-            }
+            try destination!.write(from: output)
+            position += Int64(count)
         }
-
-        _ = try FileManager.default.replaceItemAt(
-            outputURL,
-            withItemAt: correctedURL,
-            backupItemName: backupURL.lastPathComponent,
-            options: []
-        )
-        try? FileManager.default.removeItem(at: correctedURL)
-        try? FileManager.default.removeItem(at: backupURL)
+        destination = nil
+        _ = try FileManager.default.replaceItemAt(outputURL, withItemAt: correctedURL)
     }
 }

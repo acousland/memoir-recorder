@@ -6,6 +6,7 @@ import Observation
 final class SettingsStore {
     private let key = "memoir.settings"
     private let defaults: UserDefaults
+    var persistenceError: String?
 
     var settings: AppSettings {
         didSet { save() }
@@ -17,10 +18,15 @@ final class SettingsStore {
             let data = defaults.data(forKey: key),
             let decoded = try? JSONDecoder().decode(AppSettings.self, from: data)
         {
-            settings = decoded
+            var migrated = decoded
+            if migrated.processorBearerToken.isEmpty { migrated.processorBearerToken = SecretStore.read(account: "recorder-api") ?? "" }
+            settings = migrated
         } else {
-            settings = AppSettings()
+            var restored = AppSettings()
+            restored.processorBearerToken = SecretStore.read(account: "recorder-api") ?? ""
+            settings = restored
         }
+        save()
     }
 
     func updateRecordingDirectory(to url: URL) {
@@ -32,8 +38,13 @@ final class SettingsStore {
     }
 
     private func save() {
-        if let data = try? JSONEncoder().encode(settings) {
+        do {
+            try SecretStore.write(settings.processorBearerToken, account: "recorder-api")
+            var persisted = settings
+            persisted.processorBearerToken = ""
+            let data = try JSONEncoder().encode(persisted)
             defaults.set(data, forKey: key)
-        }
+            persistenceError = nil
+        } catch { persistenceError = "Unable to save settings securely: " + error.localizedDescription }
     }
 }

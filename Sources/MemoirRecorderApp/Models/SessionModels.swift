@@ -187,6 +187,7 @@ enum TransferStage: String, Codable, Sendable {
     case queuedForProcessing
     case processing
     case processingFailed
+    case completed
     case transferFailed
 }
 
@@ -250,6 +251,8 @@ struct SessionTransferState: Codable, Sendable, Identifiable {
             "Queued for processing"
         case .processing:
             "Processing"
+        case .completed:
+            "Completed"
         case .processingFailed:
             "Processing failed"
         case .transferFailed:
@@ -278,7 +281,7 @@ struct SessionTransferState: Codable, Sendable, Identifiable {
     }
 
     var canManage: Bool {
-        stage != .recording
+        [.localSaveComplete, .transferFailed, .queuedForProcessing, .processing, .processingFailed, .completed].contains(stage)
     }
 
     func withUploadPaths(metadata: String?, system: String?, mic: String?) -> SessionTransferState {
