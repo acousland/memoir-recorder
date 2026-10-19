@@ -11,6 +11,8 @@ final class RecordingController {
     private let transferManager: ProcessorTransferManager
     private let settingsStore: SettingsStore
 
+    let liveSpeakers = LiveSpeakerModel()
+
     private var captureWarning: String?
     private var currentSession: RecordingSession?
     private var systemRecorder: AudioTrackRecorder?
@@ -65,6 +67,7 @@ final class RecordingController {
     func stop() async {
         guard (isRecording || lifecycle == .failed), let session = currentSession else { return }
         lifecycle = .stopping
+        liveSpeakers.finish()
         statusText = "Stopping..."
 
         await systemCapture?.stop()
@@ -209,8 +212,13 @@ final class RecordingController {
         let customName = sanitizedDraftRecordingName()
         let session = try await sessionManager.createSession(settings: settings, sessionName: customName)
 
+        liveSpeakers.start(sessionID: session.sessionID, settings: settings)
+        let liveBuffer = liveSpeakers.buffer
         do {
             let systemRecorder = try AudioTrackRecorder(outputURL: session.systemAudioURL, sampleRate: Double(settings.sampleRate))
+            if liveSpeakers.enabled {
+                systemRecorder.onLiveAudio = { data, rate, host in liveBuffer.append(data, sampleRate: rate, hostTimeNs: host, source: "system") }
+            }
             let systemCapture = SystemAudioCaptureSource()
 
             self.currentSession = session
@@ -230,6 +238,9 @@ final class RecordingController {
 
             if settings.microphoneEnabled, let micURL = session.microphoneAudioURL {
                 let micRecorder = try AudioTrackRecorder(outputURL: micURL, sampleRate: Double(settings.sampleRate))
+                if liveSpeakers.enabled {
+                    micRecorder.onLiveAudio = { data, rate, host in liveBuffer.append(data, sampleRate: rate, hostTimeNs: host, source: "mic") }
+                }
                 let micCapture = MicrophoneCaptureSource()
                 micRecorder.onFailure = { [weak self] message in Task { @MainActor in await self?.captureFailed(message) } }
                 self.microphoneRecorder = micRecorder
@@ -246,6 +257,7 @@ final class RecordingController {
             }
             draftRecordingName = ""
         } catch {
+            liveSpeakers.finish()
             await cleanupFailedRecordingStart()
             throw error
         }

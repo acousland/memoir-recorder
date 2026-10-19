@@ -35,7 +35,7 @@ final class ThreadStatusController: NSObject {
             item.button?.toolTip = recording ? "Memoir is recording. Click for capture controls." : "Memoir — start a capture or open your conversations"
             item.button?.setAccessibilityLabel(recording ? "Memoir — recording" : "Memoir capture menu")
             item.button?.setAccessibilityValue(recording ? "Recording" : needsAttention ? "Needs attention" : "Ready")
-            let desiredHeight: CGFloat = needsAttention ? 500 : recording || controller.hasUnfinalizedRecording ? 465 : 405
+            let desiredHeight: CGFloat = needsAttention ? 650 : recording || controller.hasUnfinalizedRecording ? 700 : 405
             popover.contentSize = NSSize(width: 338, height: min(desiredHeight, (item.button?.window?.screen ?? NSScreen.main)?.visibleFrame.height.advanced(by: -65) ?? desiredHeight))
         } onChange: { [weak self] in
             Task { @MainActor in self?.update() }

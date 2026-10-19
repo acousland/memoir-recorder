@@ -175,6 +175,29 @@ struct ProcessorAPIClient: Sendable {
         _ = try await sendJSON(request, responseType: [String: String].self)
     }
 
+    func beginLiveSession(id: String) async throws -> LiveSpeakerSnapshot {
+        let request = try makeRequest(path: "v1/live/\(id)", method: "POST")
+        return try await sendJSON(request, responseType: LiveSpeakerSnapshot.self)
+    }
+
+    func sendLiveChunk(id: String, chunk: LiveAudioChunk) async throws -> LiveSpeakerSnapshot {
+        var request = try makeRequest(path: "v1/live/\(id)/chunks", method: "POST")
+        request.httpBody = try encoder.encode(chunk)
+        return try await sendJSON(request, responseType: LiveSpeakerSnapshot.self)
+    }
+
+    func nameLiveSpeaker(id: String, request body: LiveNameRequest) async throws -> LiveSpeakerSnapshot {
+        var request = try makeRequest(path: "v1/live/\(id)/speaker", method: "POST")
+        request.httpBody = try encoder.encode(body)
+        return try await sendJSON(request, responseType: LiveSpeakerSnapshot.self)
+    }
+
+    func closeLiveSession(id: String) async throws -> LiveSpeakerSnapshot {
+        var request = try makeRequest(path: "v1/live/\(id)/close", method: "POST")
+        request.timeoutInterval = 5
+        return try await sendJSON(request, responseType: LiveSpeakerSnapshot.self)
+    }
+
     private func makeRequest(path: String, method: String, authenticated: Bool = true) throws -> URLRequest {
         guard let url = URL(string: path, relativeTo: configuration.baseURL)?.absoluteURL else {
             throw ProcessorClientError.invalidBaseURL

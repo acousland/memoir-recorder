@@ -19,6 +19,7 @@ final class AudioTrackRecorder: @unchecked Sendable {
     private var finalizedTrack: FinalizedAudioTrackInfo?
     private let pendingLock = NSLock()
     private var pendingBuffers = 0
+    var onLiveAudio: (@Sendable (Data, Int, UInt64) -> Void)?
     var onFailure: (@Sendable (String) -> Void)?
 
     static func ownedCopy(of buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
@@ -96,6 +97,9 @@ final class AudioTrackRecorder: @unchecked Sendable {
                 if outputBuffer.frameLength > 0 {
                     try self.audioFile?.write(from: outputBuffer)
                     self.totalFramesWritten += AVAudioFramePosition(outputBuffer.frameLength)
+                    if let callback = self.onLiveAudio, let firstSampleHostTimeNs, let samples = outputBuffer.int16ChannelData?[0] {
+                        callback(Data(bytes: samples, count: Int(outputBuffer.frameLength) * 2), Int(self.targetFormat.sampleRate), firstSampleHostTimeNs)
+                    }
                     if let firstSampleHostTimeNs {
                         let durationNs = UInt64((Double(outputBuffer.frameLength) / self.targetFormat.sampleRate * 1_000_000_000).rounded())
                         self.lastSampleHostTimeNs = firstSampleHostTimeNs + durationNs

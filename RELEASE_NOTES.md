@@ -1,11 +1,9 @@
-# Memoir 1.3.0 — Thread
+# Memoir 1.4.0 — Live voices in Thread
 
-- A new chronological conversation library, with rose accents, serif headings, month sections and a spacious transcript reading surface. Adapts to light and dark mode.
-- Starts quietly in the menu bar after pairing. Capture starts with one click, or ⇧⌘R from another app; the library and settings tuck away once capture starts.
-- The menu bar contains only an icon, including a recording indicator. No duration or meeting name in the menu bar. The optional popover still shows recording duration and stop controls.
-- Open Your conversations from the capture popover to browse, search every transcript, rename speakers, copy, or export TXT, Markdown, SRT and JSON. Local captures, failed jobs and offline transcripts remain accessible.
-- Closing the library removes the Dock presence and leaves capture and background transfers running. Settings and Check for Updates remain available from the capture popover and main application menu.
-- Preserve the small-screen window sizing fixes. Transcript headers scroll with the page, so controls remain usable in shorter windows.
-- Group dates in the recorder Mac's local calendar, including conversations near month boundaries. Report when another app prevents registration of the capture shortcut.
+- Adds speaker avatars to the recording popover. Open the menu-bar icon to see who has been detected; a soft glow follows recently detected speech, a few seconds behind the conversation.
+- Click a speaker to name them or choose an existing person. The Processor remembers explicitly named voices locally and can recognize them in future meetings. Names carry into the finished transcript.
+- Keeps the menu bar quiet, with no duration beside the icon. Speaker cards scroll for larger meetings and the popover adapts to smaller screens.
+- Adds **Show live speakers during recording** in Settings. Requires automatic upload and Processor 1.5.0 with diarization enabled. Preview interruptions do not stop recording or affect the full audio saved locally.
+- Records short, bounded preview chunks while the complete recording continues independently. Finished transcription still starts after stopping; no live transcript, notepad or summaries are added.
 
-Compatible with Memoir Processor 1.2.0. Requires macOS 15 or later.
+Update Memoir Processor to 1.5.0 first for live speakers. Finished transcription remains compatible with older processors. Requires macOS 15 or later.

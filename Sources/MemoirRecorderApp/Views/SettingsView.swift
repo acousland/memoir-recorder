@@ -25,6 +25,12 @@ struct SettingsView: View {
 
                         Toggle("Record microphone", isOn: $model.settingsStore.settings.microphoneEnabled)
                         Toggle("Auto-upload after recording", isOn: $model.settingsStore.settings.autoUploadEnabled)
+                            .disabled(model.recordingController.isRecording)
+
+                        Toggle("Show live speakers during recording", isOn: $model.settingsStore.settings.liveSpeakersEnabled)
+                            .disabled(!model.settingsStore.settings.autoUploadEnabled || model.recordingController.isRecording)
+                        Text("Sends short audio chunks to your paired processor while recording. Name speakers from the menu bar to remember their voices locally. Requires automatic upload.")
+                            .font(.caption).foregroundStyle(.secondary)
 
                         Picker("Sample rate", selection: $model.settingsStore.settings.sampleRate) {
                             Text("16 kHz").tag(16_000)

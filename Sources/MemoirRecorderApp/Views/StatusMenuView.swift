@@ -88,11 +88,14 @@ struct StatusMenuView: View {
                 .font(.system(size: 25, design: .serif)).tracking(-0.6).multilineTextAlignment(.center).textFieldStyle(.plain).lineLimit(2...3)
                 .disabled(!capture.isRecording).onSubmit { Task { await capture.renameCurrentRecording() } }
             if let started = capture.recordingStartedAt {
-                Text(started, style: .timer).font(.system(size: 38, weight: .regular, design: .serif)).monospacedDigit()
+                Text(started, style: .timer).font(.system(size: 32, weight: .regular, design: .serif)).monospacedDigit()
                     .accessibilityLabel("Recording duration")
             }
             Text(capture.isRecording ? "Meeting audio\(capture.capturesMicrophone ? " + your microphone" : "")\nYour transcript will be ready after you stop." : capture.statusText)
                 .font(.system(size: 12)).foregroundStyle(ThreadTheme.muted).multilineTextAlignment(.center).lineSpacing(4)
+            if capture.liveSpeakers.enabled || !capture.liveSpeakers.speakers.isEmpty {
+                LiveSpeakerPanel(model: capture.liveSpeakers, recording: capture.isRecording)
+            }
             Button { Task { await model.stopCapture() } } label: {
                 Label(capture.lifecycle == .failed ? "Retry saving capture" : capture.isBusy ? "Saving…" : "Stop & transcribe", systemImage: "stop.fill")
                     .padding(.vertical, 7).frame(maxWidth: .infinity)
