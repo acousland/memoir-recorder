@@ -1,4 +1,8 @@
-# Memoir 1.2.1
+# Memoir 1.2.2
+
+- Adds “Check for Updates…” to the main Memoir application menu, next to About, so it is available directly from the meeting window.
+- Keeps the existing update button in the menu bar popover.
+- Includes the window sizing fixes from 1.2.1:
 
 - Fixes a meeting window that could open taller than the screen and refuse to shrink.
 - Repairs oversized saved window frames when opening or reopening the library.

@@ -65,5 +65,10 @@ struct MemoirRecorderApp: App {
                 .frame(minWidth: 720, minHeight: 620)
                 .padding()
         }
+        .commands {
+            CommandGroup(after: .appInfo) {
+                CheckForUpdatesView(updater: model.updater)
+            }
+        }
     }
 }
