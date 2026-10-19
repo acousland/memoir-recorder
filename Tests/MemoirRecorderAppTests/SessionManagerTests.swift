@@ -4,6 +4,16 @@ import Foundation
 import Testing
 
 struct SessionManagerTests {
+    private func temporaryFixture() throws -> (SessionManager, AppSettings, URL) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("memoir-session-test-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        var settings = AppSettings()
+        settings.recordingDirectoryURL = root
+        // Fail before writing if bookmarks resolve to the user's recordings.
+        try #require(settings.recordingDirectoryURL.resolvingSymlinksInPath() == root.resolvingSymlinksInPath())
+        return (SessionManager(), settings, root)
+    }
+
     @Test
     func sessionFolderNameIsStableAndSanitized() {
         let date = Date(timeIntervalSince1970: 0)
@@ -13,10 +23,8 @@ struct SessionManagerTests {
 
     @Test
     func metadataMatchesProcessorContract() async throws {
-        let manager = SessionManager()
-        var settings = AppSettings()
-        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
-        settings.recordingDirectoryURL = root
+        let (manager, settings, root) = try temporaryFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
 
         let session = try await manager.createSession(settings: settings, sessionName: "Weekly Review")
         FileManager.default.createFile(atPath: session.systemAudioURL.path, contents: Data(repeating: 0, count: 128))
@@ -50,10 +58,8 @@ struct SessionManagerTests {
 
     @Test
     func renamingSessionUpdatesFolderAndTransferState() async throws {
-        let manager = SessionManager()
-        var settings = AppSettings()
-        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
-        settings.recordingDirectoryURL = root
+        let (manager, settings, root) = try temporaryFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
         let originalName = "Original \(UUID().uuidString)"
         let renamedName = "Renamed \(UUID().uuidString)"
 
@@ -71,10 +77,8 @@ struct SessionManagerTests {
 
     @Test
     func renamingStoppedTransferUpdatesMetadataAndTransferState() async throws {
-        let manager = SessionManager()
-        var settings = AppSettings()
-        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
-        settings.recordingDirectoryURL = root
+        let (manager, settings, root) = try temporaryFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
 
         let session = try await manager.createSession(settings: settings, sessionName: "Original Name")
         FileManager.default.createFile(atPath: session.systemAudioURL.path, contents: Data(repeating: 0, count: 128))
@@ -104,10 +108,8 @@ struct SessionManagerTests {
 
     @Test
     func deletingStoppedTransferRemovesSessionFolder() async throws {
-        let manager = SessionManager()
-        var settings = AppSettings()
-        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
-        settings.recordingDirectoryURL = root
+        let (manager, settings, root) = try temporaryFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
 
         let session = try await manager.createSession(settings: settings, sessionName: "Delete Me")
         FileManager.default.createFile(atPath: session.systemAudioURL.path, contents: Data(repeating: 0, count: 128))
@@ -132,10 +134,8 @@ struct SessionManagerTests {
 
     @Test
     func incompleteSessionsAreRecoveredWithMetadataWhenAudioExists() async throws {
-        let manager = SessionManager()
-        var settings = AppSettings()
-        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
-        settings.recordingDirectoryURL = root
+        let (manager, settings, root) = try temporaryFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
 
         let session = try await manager.createSession(settings: settings, sessionName: "Crash Recovery")
         let recorder = try AudioTrackRecorder(outputURL: session.systemAudioURL, sampleRate: 16_000)
