@@ -1,12 +1,12 @@
 # Memoir
 
-A private macOS meeting app backed by Memoir Processor. Its main window starts/stops capture, browses the processor's archive, displays timestamped transcripts, corrects speaker names, searches, copies and exports. Completed transcripts are cached on the recorder Mac for offline use. The menu bar still provides quick recording controls.
+A private macOS meeting app backed by Memoir Processor. **Thread** combines quiet menu bar capture with a chronological conversation library: rose accents, serif headings, month sections, timestamped transcripts, speaker naming, search, copy and export. Completed transcripts are cached on the recorder Mac for offline use.
 
 This version processes transcripts after a meeting ends. It has no notepad or AI summaries. Transcription and authoritative storage run on Memoir Processor 1.2.0 or later; update the processor first. Capture saves system playback and an optional microphone into separate, aligned mono PCM WAV tracks. Requires macOS 15 or later; release builds currently target Apple Silicon.
 
 ## Use
 
-Open Memoir, choose a meeting name if desired, and start from its main window or menu bar. After stopping, select the meeting in the library to read its transcript. Grant Screen & System Audio Recording and microphone access when prompted. Recordings default to `~/Documents/Recordings`. Names are display metadata; renaming keeps the folder path stable.
+After pairing, Memoir opens quietly in the menu bar. Click its waveform icon and Start capture, or press **⇧⌘R** from any app. A name is optional. Starting a capture hides the library and Settings; the menu bar shows only a recording icon, without a duration. Click it again to stop, then choose **Your conversations** to browse finished transcripts. Opening the library brings back the Dock icon; closing it leaves Memoir running in the menu bar. The shortcut needs no keyboard-monitoring permission; if registration fails, the popover explains that capture is still available with a click. Grant Screen & System Audio Recording and microphone access when prompted. Recordings default to `~/Documents/Recordings`. Names are display metadata; renaming keeps the folder path stable.
 
 For processing, configure the processor URL and API token in Settings. The token is stored in Keychain. Test Connection verifies both service compatibility and authentication. Enable auto-upload to transfer completed recordings. Queued sessions are polled until they complete. Originals remain available locally.
 
@@ -21,7 +21,7 @@ scripts/build-app.sh
 
 Xcode with Swift 6 is required. The release script locates SwiftPM output dynamically, embeds Sparkle, signs its nested helpers, and applies the microphone entitlement. `MEMOIR_SIGNING_IDENTITY` may select a Developer ID Application identity.
 
-Tests cover actual WAV padding, retained buffer ownership, drift-corrected duration, empty recording rejection, metadata and session management. Real permissions, device changes, sleep/wake, and long-session synchronization still need acceptance testing on the intended recording hardware. Headphones reduce playback bleed; acoustic echo cancellation is not implemented.
+Tests cover actual WAV padding, retained buffer ownership, drift-corrected duration, empty recording rejection, metadata, session management, window geometry and chronological month grouping in the local time zone. Real permissions, device changes, sleep/wake, and long-session synchronization still need acceptance testing on the intended recording hardware. Headphones reduce playback bleed; acoustic echo cancellation is not implemented.
 
 ## Release and updates
 

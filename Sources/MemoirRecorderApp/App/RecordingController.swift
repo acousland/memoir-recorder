@@ -27,6 +27,7 @@ final class RecordingController {
     var canStart: Bool { !isBusy && !isRecording && currentSession == nil }
     var recordingStartedAt: Date? { currentSession?.startedAt }
     var recordingSessionID: String? { currentSession?.sessionID }
+    var capturesMicrophone: Bool { currentSession?.microphoneAudioURL != nil }
     var statusText = "Ready"
     var transferText = "Idle"
     var lastError: String?

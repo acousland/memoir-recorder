@@ -1,9 +1,13 @@
 import AppKit
 import SwiftUI
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let shortcut = CaptureShortcut()
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular)
+        NSApp.setActivationPolicy(.accessory)
+        AppModel.shared.statusMenu = ThreadStatusController(model: AppModel.shared)
+        AppModel.shared.shortcutAvailable = shortcut.register()
         _ = AppModel.shared.updater
         Task { @MainActor in
             let controller = AppModel.shared.recordingController
@@ -15,10 +19,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
             Task { @MainActor in
-                AppModel.shared.showMeetings()
+                if !AppModel.shared.settingsStore.settings.isProcessorConfigured { AppModel.shared.showMeetings() }
             }
         }
     }
+
+    func applicationWillTerminate(_ notification: Notification) { shortcut.unregister() }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let controller = AppModel.shared.recordingController
@@ -55,19 +61,25 @@ struct MemoirRecorderApp: App {
     @State private var model = AppModel.shared
 
     var body: some Scene {
-        MenuBarExtra("Memoir", systemImage: model.recordingController.isRecording ? "record.circle.fill" : "circlebadge") {
-            StatusMenuView(model: model)
-        }
-        .menuBarExtraStyle(.window)
-
         Settings {
             SettingsView(model: model)
-                .frame(minWidth: 720, minHeight: 620)
+                .frame(minWidth: 610, minHeight: 380)
                 .padding()
         }
         .commands {
             CommandGroup(after: .appInfo) {
                 CheckForUpdatesView(updater: model.updater)
+            }
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") { model.showSettings() }.keyboardShortcut(",")
+            }
+            CommandMenu("Capture") {
+                Button("Capture Controls…") { model.statusMenu?.show() }
+                Button(model.recordingController.isRecording ? "Stop & Transcribe" : "Start Capture") {
+                    Task { await model.toggleCapture() }
+                }.disabled(model.recordingController.isBusy)
+                Button("Your Conversations") { model.showMeetings() }.keyboardShortcut("1")
+                Button("Hide and Keep Recording") { model.hideForCapture() }.disabled(!model.recordingController.isRecording)
             }
         }
     }
